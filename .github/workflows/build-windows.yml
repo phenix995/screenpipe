@@ -1,0 +1,115 @@
+name: Build Windows
+
+on:
+  # Run on push to main branch
+  push:
+    branches: [ main, master ]
+  # Run on pull requests
+  pull_request:
+    branches: [ main, master ]
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    # Checkout the repository
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Setup Rust toolchain
+    - name: Setup Rust
+      uses: dtolnay/rust-action@stable
+      with:
+        toolchain: stable
+
+    # Cache Rust dependencies
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "windows-build"
+
+    # Setup Node.js (required for Tauri)
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    # Install Bun
+    - name: Install Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
+
+    # Install Windows dependencies
+    - name: Install Windows dependencies
+      run: |
+        # Install vcpkg packages if needed
+        vcpkg integrate install
+
+    # Build Rust project
+    - name: Build Rust (Release)
+      run: cargo build --release
+      env:
+        RUSTFLAGS: "-C target-feature=-crt-static"
+
+    # Build Tauri app
+    - name: Build Tauri App
+      working-directory: ./apps/screenpipe-app-tauri
+      run: |
+        bun install
+        bun tauri build
+      env:
+        TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    # Upload Rust binaries
+    - name: Upload Rust binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-binaries
+        path: |
+          target/release/*.exe
+          target/release/screenpipe.exe
+        if-no-files-found: warn
+
+    # Upload Tauri app
+    - name: Upload Tauri App
+      uses: actions/upload-artifact@v4
+      with:
+        name: tauri-app
+        path: |
+          apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.exe
+          apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.msi
+          apps/screenpipe-app-tauri/src-tauri/target/release/screenpipe-app.exe
+        if-no-files-found: warn
+
+    # Upload all build artifacts
+    - name: Upload all artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-build-all
+        path: |
+          target/release/*.exe
+          apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**
+        if-no-files-found: warn
+
+    # Create Release (only on manual trigger or tag)
+    - name: Create Release
+      if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          target/release/screenpipe.exe
+          apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.exe
+          apps/screenpipe-app-tauri/src-tauri/target/release/bundle/**/*.msi
+        draft: true
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -61,6 +61,15 @@ const config = {
 }
 
 async function findWget() {
+	// First try to find curl (available natively on Windows 10/11)
+	try {
+		await $`curl --version`.quiet();
+		console.log('Using curl for downloads');
+		return 'curl';
+	} catch (error) {
+		// curl not found, try wget
+	}
+
 	const possiblePaths = [
 		'C:\\ProgramData\\chocolatey\\bin\\wget.exe',
 		'C:\\Program Files\\Git\\mingw64\\bin\\wget.exe',
@@ -80,7 +89,7 @@ async function findWget() {
 		}
 	}
 
-	console.error('wget not found. Please install wget and make sure it\'s in your PATH.');
+	console.error('Neither curl nor wget found. Please install one of them and make sure it\'s in your PATH.');
 	process.exit(1);
 }
 
@@ -285,11 +294,16 @@ async function copyVcredistDlls() {
 
 /* ########## Windows ########## */
 if (platform == 'windows') {
-	const wgetPath = await findWget();
+	const downloadTool = await findWget();
+	const isCurl = downloadTool === 'curl';
 
 	// Setup FFMPEG
 	if (!(await fs.exists(config.ffmpegRealname))) {
-		await $`${wgetPath} --no-config --tries=10 --retry-connrefused --waitretry=10 --secure-protocol=auto --no-check-certificate --show-progress ${config.windows.ffmpegUrl} -O ${config.windows.ffmpegName}.7z`
+		if (isCurl) {
+			await $`curl -L --retry 10 --retry-delay 10 -k --progress-bar ${config.windows.ffmpegUrl} -o ${config.windows.ffmpegName}.7z`
+		} else {
+			await $`${downloadTool} --no-config --tries=10 --retry-connrefused --waitretry=10 --secure-protocol=auto --no-check-certificate --show-progress ${config.windows.ffmpegUrl} -O ${config.windows.ffmpegName}.7z`
+		}
 		await $`7z x ${config.windows.ffmpegName}.7z`
 		await $`mv ${config.windows.ffmpegName} ${config.ffmpegRealname}`
 		await $`rm -rf ${config.windows.ffmpegName}.7z`
