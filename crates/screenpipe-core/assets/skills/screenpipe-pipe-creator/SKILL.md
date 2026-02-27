@@ -7,6 +7,13 @@ description: Create, install, and manage screenpipe pipes — scheduled AI agent
 
 Create scheduled AI agents ("pipes") that run automatically on your local machine.
 
+## Shell: pick the right one for the OS
+
+- **macOS/Linux** → `bash`, `curl`, paths use `~/`
+- **Windows** → `powershell`, `curl.exe`, paths use `$env:USERPROFILE\`
+
+All examples below use bash. On Windows, adapt: use `powershell`, replace `curl` with `curl.exe`, replace `$(date …)` with PowerShell equivalent, replace `~` with `$env:USERPROFILE`. `bunx` works the same in PowerShell.
+
 ## What is a pipe?
 
 A pipe is a scheduled AI agent defined as a single markdown file: `~/.screenpipe/pipes/{name}/pipe.md`
@@ -46,6 +53,7 @@ Before execution, screenpipe prepends a context header to the prompt with:
 - Time range (start/end timestamps based on the schedule interval)
 - Current date
 - User's timezone
+- OS (windows, macos, linux)
 - Screenpipe API base URL (`http://localhost:3030`)
 - Output directory
 

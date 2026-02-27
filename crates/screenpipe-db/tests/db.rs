@@ -1234,7 +1234,7 @@ mod tests {
         // Test searching OCR with frame_name filter
         let results = db
             .search(
-                "text:Hello",
+                "Hello",
                 ContentType::OCR,
                 100,
                 0,

@@ -486,9 +486,9 @@ impl RewindWindowId {
 
     pub fn min_size(&self) -> Option<(f64, f64)> {
         Some(match self {
-            RewindWindowId::Main => (1200.0, 850.0),
-            RewindWindowId::Settings => (1200.0, 850.0),
-            RewindWindowId::Search => (1200.0, 850.0),
+            RewindWindowId::Main => (800.0, 600.0),
+            RewindWindowId::Settings => (800.0, 600.0),
+            RewindWindowId::Search => (800.0, 600.0),
             RewindWindowId::Onboarding => (450.0, 500.0),
             RewindWindowId::Chat => (600.0, 750.0),
             RewindWindowId::PermissionRecovery => (500.0, 580.0),
@@ -498,6 +498,20 @@ impl RewindWindowId {
     pub fn get(&self, app: &AppHandle<Wry>) -> Option<WebviewWindow> {
         let label = self.label();
         app.get_webview_window(&label)
+    }
+}
+
+/// Compute a window size that fits within the user's primary monitor.
+/// Returns `(width, height)` in logical pixels, clamped to 85% of the
+/// monitor's dimensions so the window never overflows off-screen.
+fn screen_aware_size(app: &AppHandle, desired_w: f64, desired_h: f64) -> (f64, f64) {
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let logical: LogicalSize<f64> = monitor.size().to_logical(monitor.scale_factor());
+        let max_w = logical.width * 0.85;
+        let max_h = logical.height * 0.85;
+        (desired_w.min(max_w), desired_h.min(max_h))
+    } else {
+        (desired_w, desired_h)
     }
 }
 
@@ -527,8 +541,9 @@ impl ShowRewindWindow {
             .shadow(true);
 
         if let Some(min) = id.min_size() {
+            let (w, h) = screen_aware_size(app, 1200.0, 850.0);
             builder = builder
-                .inner_size(min.0, min.1)
+                .inner_size(w.max(min.0), h.max(min.1))
                 .min_inner_size(min.0, min.1);
         }
 
@@ -548,10 +563,11 @@ impl ShowRewindWindow {
             .accept_first_mouse(true)
             .shadow(true);
 
-        // Set minimum size for windows
+        // Set size clamped to screen, with minimum enforced
         if let Some(min) = id.min_size() {
+            let (w, h) = screen_aware_size(app, 1200.0, 850.0);
             builder = builder
-                .inner_size(min.0, min.1)
+                .inner_size(w.max(min.0), h.max(min.1))
                 .min_inner_size(min.0, min.1);
         }
 
@@ -914,6 +930,8 @@ impl ShowRewindWindow {
                     // Created hidden — shown after webview + panel setup.
                     // ============================================================
 
+                    let (win_w, win_h) = screen_aware_size(app, 1200.0, 800.0);
+
                     #[cfg(target_os = "macos")]
                     let window = {
                         // NOTE: Do NOT switch to Accessory mode here — it hides dock icon
@@ -921,7 +939,7 @@ impl ShowRewindWindow {
                         // behaviors handles fullscreen Space visibility instead.
                         let builder = self.window_builder_with_label(app, "/", main_label_for_mode("window"))
                             .title("screenpipe")
-                            .inner_size(1200.0, 800.0)
+                            .inner_size(win_w, win_h)
                             .min_inner_size(800.0, 600.0)
                             .decorations(true)
                             .visible(false)
@@ -936,7 +954,7 @@ impl ShowRewindWindow {
                         let app_clone = app.clone();
                         let builder = self.window_builder_with_label(app, "/", main_label_for_mode("window"))
                             .title("screenpipe")
-                            .inner_size(1200.0, 800.0)
+                            .inner_size(win_w, win_h)
                             .min_inner_size(800.0, 600.0)
                             .decorations(true)
                             .visible(false)
@@ -1209,10 +1227,11 @@ impl ShowRewindWindow {
                 // blank/unresponsive window and premature focus-loss events.
                 #[cfg(target_os = "linux")]
                 let window = {
+                    let (linux_w, linux_h) = screen_aware_size(app, 1200.0, 800.0);
                     let app_clone = app.clone();
                     let builder = self.window_builder_with_label(app, "/", main_label_for_mode("fullscreen"))
                         .title("screenpipe")
-                        .inner_size(1200.0, 800.0)
+                        .inner_size(linux_w, linux_h)
                         .min_inner_size(800.0, 600.0)
                         .decorations(true)
                         .visible(false)

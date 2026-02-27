@@ -743,6 +743,38 @@ async calendarGetCurrentMeeting() : Promise<Result<CalendarEventItem[], string>>
     else return { status: "error", error: e  as any };
 }
 },
+async icsCalendarGetEntries() : Promise<Result<IcsCalendarEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ics_calendar_get_entries") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async icsCalendarSaveEntries(entries: IcsCalendarEntry[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ics_calendar_save_entries", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async icsCalendarTestUrl(url: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ics_calendar_test_url", { url }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async icsCalendarGetUpcoming() : Promise<Result<CalendarEventItem[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ics_calendar_get_upcoming") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Tauri command: start voice training. Spawns a background task that polls
  * until audio is transcribed, then assigns the speaker. Returns immediately.
@@ -818,6 +850,7 @@ export type CalendarStatus = { available: boolean; authorized: boolean; authoriz
 export type Credits = { amount: number }
 export type EmbeddedLLM = { enabled: boolean; model: string; port: number }
 export type HardwareCapability = { hasGpu: boolean; cpuCores: bigint; totalMemoryGb: number; isWeakForLargeModel: boolean; recommendedEngine: string; reason: string }
+export type IcsCalendarEntry = { name: string; url: string; enabled: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
 export type LogFile = { name: string; path: string; modified_at: bigint }
 export type MonitorDevice = { id: number; stableId: string; name: string; isDefault: boolean; width: number; height: number }

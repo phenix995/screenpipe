@@ -9,6 +9,13 @@ Export screen recordings as videos, extract audio, and perform media editing usi
 
 The API runs at `http://localhost:3030`.
 
+## Shell: pick the right one for the OS
+
+- **macOS/Linux** → `bash`, `curl`, `date -u -v-5M +%Y-%m-%dT%H:%M:%SZ`
+- **Windows** → `powershell`, `curl.exe` (not the alias), `(Get-Date).ToUniversalTime().AddMinutes(-5).ToString("yyyy-MM-ddTHH:mm:ssZ")`
+
+All examples below use bash. On Windows, adapt: use `powershell`, replace `curl` with `curl.exe`, replace `$(date …)` with the PowerShell equivalent, replace `~` with `$env:USERPROFILE`, replace `mkdir -p` with `New-Item -ItemType Directory -Force -Path`.
+
 ## Video Export API
 
 ### POST /frames/export

@@ -1743,17 +1743,17 @@ impl DatabaseManager {
 
         if let Some(app) = app_name {
             if !app.is_empty() {
-                frame_fts_parts.push(format!("app_name:{}", app));
+                frame_fts_parts.push(format!("app_name:\"{}\"", app.replace('"', "")));
             }
         }
         if let Some(window) = window_name {
             if !window.is_empty() {
-                frame_fts_parts.push(format!("window_name:{}", window));
+                frame_fts_parts.push(format!("window_name:\"{}\"", window.replace('"', "")));
             }
         }
         if let Some(browser) = browser_url {
             if !browser.is_empty() {
-                frame_fts_parts.push(format!("browser_url:{}", browser));
+                frame_fts_parts.push(format!("browser_url:\"{}\"", browser.replace('"', "")));
             }
         }
         if let Some(is_focused) = focused {
@@ -1761,7 +1761,7 @@ impl DatabaseManager {
         }
         if let Some(frame_name) = frame_name {
             if !frame_name.is_empty() {
-                frame_fts_parts.push(format!("name:{}", frame_name));
+                frame_fts_parts.push(format!("name:\"{}\"", frame_name.replace('"', "")));
             }
         }
 
@@ -1845,7 +1845,7 @@ impl DatabaseManager {
             .bind(if query.trim().is_empty() {
                 None
             } else {
-                Some(query)
+                Some(crate::text_normalizer::sanitize_fts5_query(query))
             })
             .bind(limit)
             .bind(offset)
@@ -1957,7 +1957,8 @@ impl DatabaseManager {
 
         // bind parameters in the same order as added to the where clause
         if !query.is_empty() {
-            query_builder = query_builder.bind(query);
+            query_builder =
+                query_builder.bind(crate::text_normalizer::sanitize_fts5_query(query));
         }
         if let Some(start) = start_time {
             query_builder = query_builder.bind(start);
@@ -2290,24 +2291,24 @@ impl DatabaseManager {
 
         // Split query parts between frame metadata and OCR content
         if !query.is_empty() {
-            ocr_fts_parts.push(query.to_owned()); // Just use the query directly
-            ui_fts_parts.push(query.to_owned());
+            ocr_fts_parts.push(crate::text_normalizer::sanitize_fts5_query(query));
+            ui_fts_parts.push(crate::text_normalizer::sanitize_fts5_query(query));
         }
         if let Some(app) = app_name {
             if !app.is_empty() {
-                frame_fts_parts.push(format!("app_name:{}", app));
-                ui_fts_parts.push(format!("app_name:\"{}\"", app));
+                frame_fts_parts.push(format!("app_name:\"{}\"", app.replace('"', "")));
+                ui_fts_parts.push(format!("app_name:\"{}\"", app.replace('"', "")));
             }
         }
         if let Some(window) = window_name {
             if !window.is_empty() {
-                frame_fts_parts.push(format!("window_name:{}", window));
-                ui_fts_parts.push(format!("window_name:\"{}\"", window));
+                frame_fts_parts.push(format!("window_name:\"{}\"", window.replace('"', "")));
+                ui_fts_parts.push(format!("window_name:\"{}\"", window.replace('"', "")));
             }
         }
         if let Some(browser) = browser_url {
             if !browser.is_empty() {
-                frame_fts_parts.push(format!("browser_url:{}", browser));
+                frame_fts_parts.push(format!("browser_url:\"{}\"", browser.replace('"', "")));
             }
         }
         if let Some(is_focused) = focused {
@@ -2394,6 +2395,51 @@ impl DatabaseManager {
                     "audio_transcriptions_fts MATCH ?1"
                 }
             ),
+            ContentType::Input => {
+                // Count ui_events using parameterized LIKE queries
+                let mut conditions = Vec::new();
+                let mut bind_values: Vec<String> = Vec::new();
+
+                if !query.is_empty() {
+                    conditions.push(
+                        "(text_content LIKE '%' || ? || '%' OR app_name LIKE '%' || ? || '%' OR window_title LIKE '%' || ? || '%')"
+                            .to_string(),
+                    );
+                    bind_values.push(query.to_owned());
+                    bind_values.push(query.to_owned());
+                    bind_values.push(query.to_owned());
+                }
+                if let Some(app) = app_name {
+                    if !app.is_empty() {
+                        conditions.push("app_name LIKE '%' || ? || '%'".to_string());
+                        bind_values.push(app.to_owned());
+                    }
+                }
+                if let Some(window) = window_name {
+                    if !window.is_empty() {
+                        conditions.push("window_title LIKE '%' || ? || '%'".to_string());
+                        bind_values.push(window.to_owned());
+                    }
+                }
+
+                let where_part = if conditions.is_empty() {
+                    "1=1".to_string()
+                } else {
+                    conditions.join(" AND ")
+                };
+
+                let input_sql = format!(
+                    "SELECT COUNT(*) FROM ui_events WHERE {} AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp <= ?)",
+                    where_part
+                );
+                let mut qb = sqlx::query_scalar::<_, i64>(&input_sql);
+                for val in &bind_values {
+                    qb = qb.bind(val);
+                }
+                qb = qb.bind(start_time).bind(start_time).bind(end_time).bind(end_time);
+                let count: i64 = qb.fetch_one(&self.pool).await?;
+                return Ok(count as usize);
+            }
             _ => return Ok(0),
         };
 
@@ -2426,8 +2472,13 @@ impl DatabaseManager {
                     .await?
             }
             ContentType::Audio => {
+                let sanitized_audio = if query.is_empty() {
+                    "*".to_owned()
+                } else {
+                    crate::text_normalizer::sanitize_fts5_query(query)
+                };
                 let mut query_builder = sqlx::query_scalar(&sql)
-                    .bind(if query.is_empty() { "*" } else { query })
+                    .bind(&sanitized_audio)
                     .bind(start_time)
                     .bind(end_time)
                     .bind(min_length.map(|l| l as i64))
@@ -2438,17 +2489,7 @@ impl DatabaseManager {
                 }
                 query_builder.fetch_one(&self.pool).await?
             }
-            _ => {
-                sqlx::query_scalar(&sql)
-                    .bind(query)
-                    .bind(start_time)
-                    .bind(end_time)
-                    .bind(min_length.map(|l| l as i64))
-                    .bind(max_length.map(|l| l as i64))
-                    .bind(json_array)
-                    .fetch_one(&self.pool)
-                    .await?
-            }
+            _ => return Ok(0),
         };
 
         Ok(count as usize)
@@ -2957,13 +2998,13 @@ impl DatabaseManager {
         // combine search aspects into single fts query
         let mut fts_parts = Vec::new();
         if !query.is_empty() {
-            fts_parts.push(query.to_owned());
+            fts_parts.push(crate::text_normalizer::sanitize_fts5_query(query));
         }
         if let Some(app) = app_name {
-            fts_parts.push(format!("app:{}", app));
+            fts_parts.push(format!("app:\"{}\"", app.replace('"', "")));
         }
         if let Some(window) = window_name {
-            fts_parts.push(format!("window:{}", window));
+            fts_parts.push(format!("window:\"{}\"", window.replace('"', "")));
         }
         let combined_query = fts_parts.join(" ");
 
@@ -3037,13 +3078,13 @@ impl DatabaseManager {
     ) -> Result<Vec<UiContent>, sqlx::Error> {
         let mut fts_parts = Vec::new();
         if !query.is_empty() {
-            fts_parts.push(query.to_owned());
+            fts_parts.push(crate::text_normalizer::sanitize_fts5_query(query));
         }
         if let Some(app) = app_name {
-            fts_parts.push(format!("app_name:{}", app));
+            fts_parts.push(format!("app_name:\"{}\"", app.replace('"', "")));
         }
         if let Some(window) = window_name {
-            fts_parts.push(format!("window_name:{}", window));
+            fts_parts.push(format!("window_name:\"{}\"", window.replace('"', "")));
         }
         let combined_query = fts_parts.join(" ");
 
@@ -3116,28 +3157,35 @@ impl DatabaseManager {
         offset: u32,
     ) -> Result<Vec<UiEventRecord>, sqlx::Error> {
         let mut conditions = vec!["1=1".to_string()];
+        let mut bind_values: Vec<String> = Vec::new();
 
         if let Some(q) = query {
             if !q.is_empty() {
-                conditions.push(format!(
-                    "(text_content LIKE '%{}%' OR app_name LIKE '%{}%' OR window_title LIKE '%{}%')",
-                    q, q, q
-                ));
+                conditions.push(
+                    "(text_content LIKE '%' || ? || '%' OR app_name LIKE '%' || ? || '%' OR window_title LIKE '%' || ? || '%')"
+                        .to_string(),
+                );
+                bind_values.push(q.to_owned());
+                bind_values.push(q.to_owned());
+                bind_values.push(q.to_owned());
             }
         }
         if let Some(et) = event_type {
             if !et.is_empty() {
-                conditions.push(format!("event_type = '{}'", et));
+                conditions.push("event_type = ?".to_string());
+                bind_values.push(et.to_owned());
             }
         }
         if let Some(app) = app_name {
             if !app.is_empty() {
-                conditions.push(format!("app_name LIKE '%{}%'", app));
+                conditions.push("app_name LIKE '%' || ? || '%'".to_string());
+                bind_values.push(app.to_owned());
             }
         }
         if let Some(window) = window_name {
             if !window.is_empty() {
-                conditions.push(format!("window_title LIKE '%{}%'", window));
+                conditions.push("window_title LIKE '%' || ? || '%'".to_string());
+                bind_values.push(window.to_owned());
             }
         }
 
@@ -3155,16 +3203,22 @@ impl DatabaseManager {
                 frame_id
             FROM ui_events
             WHERE {}
-                AND (?1 IS NULL OR timestamp >= ?1)
-                AND (?2 IS NULL OR timestamp <= ?2)
+                AND (? IS NULL OR timestamp >= ?)
+                AND (? IS NULL OR timestamp <= ?)
             ORDER BY timestamp DESC
-            LIMIT ?3 OFFSET ?4
+            LIMIT ? OFFSET ?
             "#,
             where_clause
         );
 
-        let rows: Vec<UiEventRow> = sqlx::query_as(&sql)
+        let mut query_builder = sqlx::query_as::<_, UiEventRow>(&sql);
+        for val in &bind_values {
+            query_builder = query_builder.bind(val);
+        }
+        let rows: Vec<UiEventRow> = query_builder
             .bind(start_time)
+            .bind(start_time)
+            .bind(end_time)
             .bind(end_time)
             .bind(limit)
             .bind(offset)
@@ -3860,7 +3914,7 @@ impl DatabaseManager {
                 // Use intelligent query expansion for compound words
                 crate::text_normalizer::expand_search_query(query)
             } else {
-                query.to_string()
+                crate::text_normalizer::sanitize_fts5_query(query)
             };
             conditions.push(
                 "f.id IN (SELECT frame_id FROM ocr_text_fts WHERE text MATCH ? ORDER BY rank LIMIT 5000)",
@@ -4044,7 +4098,7 @@ LIMIT ? OFFSET ?
             let fts_match = if fuzzy_match {
                 crate::text_normalizer::expand_search_query(query)
             } else {
-                query.to_string()
+                crate::text_normalizer::sanitize_fts5_query(query)
             };
             conditions.push(
                 "f.id IN (SELECT frame_id FROM ocr_text_fts WHERE text MATCH ? ORDER BY rank LIMIT 5000)",

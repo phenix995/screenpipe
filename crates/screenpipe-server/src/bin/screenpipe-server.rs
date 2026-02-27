@@ -628,9 +628,9 @@ async fn main() -> anyhow::Result<()> {
     // Create meeting detector for smart transcription mode.
     // Shared between audio manager (checks state) and UI recorder (feeds events).
     let meeting_detector: Option<Arc<MeetingDetector>> =
-        if config.transcription_mode == screenpipe_audio::audio_manager::TranscriptionMode::Smart {
+        if config.transcription_mode == screenpipe_audio::audio_manager::TranscriptionMode::Batch {
             let detector = Arc::new(MeetingDetector::new());
-            info!("smart mode: meeting detector enabled — will defer Whisper during meetings");
+            info!("batch mode: meeting detector enabled — used for metadata only");
             Some(detector)
         } else {
             None

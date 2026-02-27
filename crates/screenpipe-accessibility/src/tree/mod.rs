@@ -9,6 +9,8 @@
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "linux")]
+mod linux;
 
 pub mod cache;
 
@@ -180,17 +182,21 @@ pub fn create_tree_walker(config: TreeWalkerConfig) -> Box<dyn TreeWalkerPlatfor
     {
         Box::new(windows::WindowsTreeWalker::new(config))
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(linux::LinuxTreeWalker::new(config))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         Box::new(StubTreeWalker)
     }
 }
 
 /// Stub for unsupported platforms.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 struct StubTreeWalker;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 impl TreeWalkerPlatform for StubTreeWalker {
     fn walk_focused_window(&self) -> Result<Option<TreeSnapshot>> {
         Ok(None)

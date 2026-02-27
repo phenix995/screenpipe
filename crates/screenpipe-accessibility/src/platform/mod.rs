@@ -12,6 +12,9 @@ pub mod windows_uia;
 #[cfg(all(test, target_os = "windows"))]
 mod windows_uia_tests;
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+
 // Re-export platform-specific types with common names
 #[cfg(target_os = "macos")]
 pub use macos::{PermissionStatus, RecordingHandle, UiRecorder};
@@ -19,8 +22,11 @@ pub use macos::{PermissionStatus, RecordingHandle, UiRecorder};
 #[cfg(target_os = "windows")]
 pub use windows::{PermissionStatus, RecordingHandle, UiRecorder};
 
-// Stub for unsupported platforms (Linux, etc.)
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+pub use linux::{PermissionStatus, RecordingHandle, UiRecorder};
+
+// Stub for unsupported platforms (not macOS, Windows, or Linux)
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub mod stub {
     use crate::activity_feed::ActivityFeed;
     use crate::config::UiCaptureConfig;
@@ -101,5 +107,5 @@ pub mod stub {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub use stub::{PermissionStatus, RecordingHandle, UiRecorder};

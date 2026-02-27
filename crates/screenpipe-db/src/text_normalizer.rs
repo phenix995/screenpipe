@@ -31,11 +31,41 @@ fn split_compound(text: &str) -> String {
     result.into_owned()
 }
 
+/// Sanitize a query string for safe use in FTS5 MATCH expressions.
+///
+/// Wraps each whitespace-delimited token in double quotes so that
+/// special characters (dots, parens, colons, etc.) are treated as
+/// literal text rather than FTS5 operators.
+///
+/// # Example
+/// ```
+/// use screenpipe_db::text_normalizer::sanitize_fts5_query;
+///
+/// assert_eq!(sanitize_fts5_query("100.100.0.42"), r#""100.100.0.42""#);
+/// assert_eq!(sanitize_fts5_query("hello world"), r#""hello" "world""#);
+/// ```
+pub fn sanitize_fts5_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter_map(|token| {
+            let cleaned = token.replace('"', "");
+            if cleaned.is_empty() {
+                return None;
+            }
+            Some(format!("\"{}\"", cleaned))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Expand a search query to improve recall on compound words.
 ///
 /// Takes a user query and returns an expanded FTS5 query that searches for:
 /// 1. The original term (with prefix matching)
 /// 2. Split parts of compound words (with prefix matching)
+///
+/// All tokens are quoted to safely handle special characters (dots, parens, etc.)
+/// in FTS5.
 ///
 /// This catches cases where OCR concatenated words like "ActivityPerformance"
 /// when the user searches for "activity" or "performance".
@@ -44,11 +74,11 @@ fn split_compound(text: &str) -> String {
 /// ```
 /// use screenpipe_db::text_normalizer::expand_search_query;
 ///
-/// // Single word - just adds prefix matching
-/// assert_eq!(expand_search_query("test"), "test*");
+/// // Single word - quoted with prefix matching
+/// assert_eq!(expand_search_query("test"), r#""test"*"#);
 ///
 /// // Compound word - expands to catch parts
-/// assert_eq!(expand_search_query("proStart"), "(proStart* OR pro* OR Start*)");
+/// assert_eq!(expand_search_query("proStart"), r#"("proStart"* OR "pro"* OR "Start"*)"#);
 /// ```
 pub fn expand_search_query(query: &str) -> String {
     let query = query.trim();
@@ -60,22 +90,23 @@ pub fn expand_search_query(query: &str) -> String {
     let expanded_terms: Vec<String> = query
         .split_whitespace()
         .flat_map(|word| {
-            let split = split_compound(word);
+            let cleaned = word.replace('"', "");
+            let split = split_compound(&cleaned);
             let parts: Vec<&str> = split.split_whitespace().collect();
 
             if parts.len() > 1 {
                 // Word was split - include original and parts with prefix matching
-                let mut terms = vec![format!("{}*", word)];
+                let mut terms = vec![format!("\"{}\"*", cleaned)];
                 for part in parts {
                     if part.len() >= 2 {
                         // Only add parts with 2+ chars to avoid noise
-                        terms.push(format!("{}*", part));
+                        terms.push(format!("\"{}\"*", part));
                     }
                 }
                 terms
             } else {
-                // No split needed - just add prefix matching
-                vec![format!("{}*", word)]
+                // No split needed - just add quoted prefix matching
+                vec![format!("\"{}\"*", cleaned)]
             }
         })
         .collect();
@@ -115,20 +146,51 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_fts5_simple() {
+        assert_eq!(sanitize_fts5_query("hello"), r#""hello""#);
+        assert_eq!(sanitize_fts5_query("hello world"), r#""hello" "world""#);
+    }
+
+    #[test]
+    fn test_sanitize_fts5_dots() {
+        assert_eq!(sanitize_fts5_query("100.100.0.42"), r#""100.100.0.42""#);
+    }
+
+    #[test]
+    fn test_sanitize_fts5_special_chars() {
+        assert_eq!(sanitize_fts5_query("foo(bar)"), r#""foo(bar)""#);
+        assert_eq!(sanitize_fts5_query("C++"), r#""C++""#);
+    }
+
+    #[test]
+    fn test_sanitize_fts5_strips_quotes() {
+        assert_eq!(
+            sanitize_fts5_query(r#"he said "hello""#),
+            r#""he" "said" "hello""#
+        );
+    }
+
+    #[test]
+    fn test_sanitize_fts5_empty() {
+        assert_eq!(sanitize_fts5_query(""), "");
+        assert_eq!(sanitize_fts5_query("   "), "");
+    }
+
+    #[test]
     fn test_expand_simple_query() {
-        assert_eq!(expand_search_query("test"), "test*");
-        assert_eq!(expand_search_query("hello"), "hello*");
+        assert_eq!(expand_search_query("test"), r#""test"*"#);
+        assert_eq!(expand_search_query("hello"), r#""hello"*"#);
     }
 
     #[test]
     fn test_expand_compound_query() {
         assert_eq!(
             expand_search_query("proStart"),
-            "(proStart* OR pro* OR Start*)"
+            r#"("proStart"* OR "pro"* OR "Start"*)"#
         );
         assert_eq!(
             expand_search_query("ActivityPerformance"),
-            "(ActivityPerformance* OR Activity* OR Performance*)"
+            r#"("ActivityPerformance"* OR "Activity"* OR "Performance"*)"#
         );
     }
 
@@ -136,14 +198,17 @@ mod tests {
     fn test_expand_number_boundary() {
         assert_eq!(
             expand_search_query("test123"),
-            "(test123* OR test* OR 123*)"
+            r#"("test123"* OR "test"* OR "123"*)"#
         );
     }
 
     #[test]
     fn test_expand_multi_word_query() {
         // Each word gets expanded independently
-        assert_eq!(expand_search_query("hello world"), "(hello* OR world*)");
+        assert_eq!(
+            expand_search_query("hello world"),
+            r#"("hello"* OR "world"*)"#
+        );
     }
 
     #[test]
@@ -155,11 +220,20 @@ mod tests {
     #[test]
     fn test_expand_filters_short_parts() {
         // Single char parts should be filtered out
-        assert_eq!(expand_search_query("iPhone"), "(iPhone* OR Phone*)");
+        assert_eq!(
+            expand_search_query("iPhone"),
+            r#"("iPhone"* OR "Phone"*)"#
+        );
     }
 
     #[test]
     fn test_expand_preserves_lowercase() {
-        assert_eq!(expand_search_query("simple"), "simple*");
+        assert_eq!(expand_search_query("simple"), r#""simple"*"#);
+    }
+
+    #[test]
+    fn test_expand_dots_in_query() {
+        // IP addresses and dotted identifiers should be safely quoted
+        assert_eq!(expand_search_query("100.100.0.42"), r#""100.100.0.42"*"#);
     }
 }

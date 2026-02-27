@@ -26,10 +26,11 @@ pub enum TranscriptionMode {
     /// Transcribe immediately as audio is captured (current behavior).
     #[default]
     Realtime,
-    /// Defer local Whisper inference to idle periods (CPU < threshold).
-    /// Audio capture continues uninterrupted; only transcription is paused.
+    /// Accumulate audio into longer batches (30s-5min) using silence-gap detection.
+    /// Gives Whisper more context for better transcription quality.
     /// Has no effect on Deepgram (cloud) — always realtime.
-    Smart,
+    #[serde(alias = "Smart")]
+    Batch,
 }
 
 #[derive(Clone)]
@@ -54,9 +55,9 @@ pub struct AudioManagerOptions {
     /// and switch when the system default changes (e.g., device plug/unplug)
     pub use_system_default_audio: bool,
     /// Controls when local Whisper transcription runs.
-    /// `Realtime` = immediate (default), `Smart` = defer to idle periods.
+    /// `Realtime` = immediate (default), `Batch` = accumulate longer chunks for quality.
     pub transcription_mode: TranscriptionMode,
-    /// Meeting detector for smart mode — defers Whisper during detected meetings.
+    /// Meeting detector for batch mode — used for metadata/summaries.
     /// Shared with UI recorder which feeds app switch events into it.
     pub meeting_detector: Option<Arc<MeetingDetector>>,
     /// Custom vocabulary entries for transcription biasing and word replacement.

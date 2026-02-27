@@ -50,6 +50,14 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
 ] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# AT-SPI2 accessibility via D-Bus (pure Rust, no system deps for compilation)
+zbus = { version = "5", features = ["blocking"] }
+# Input device events from /dev/input/event*
+evdev = "0.13"
+# fcntl for non-blocking I/O on evdev fds
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 

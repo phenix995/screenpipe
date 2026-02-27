@@ -41,7 +41,7 @@ function getDeviceId(request: Request): string {
  * @returns AuthResult with tier information
  */
 export async function validateAuth(request: Request, env: Env): Promise<AuthResult> {
-  const deviceId = getDeviceId(request);
+  const headerDeviceId = getDeviceId(request);
   const authHeader = request.headers.get('Authorization');
 
   // No auth header = anonymous tier (free usage)
@@ -49,7 +49,7 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
     return {
       isValid: true,
       tier: 'anonymous',
-      deviceId,
+      deviceId: headerDeviceId,
     };
   }
 
@@ -61,7 +61,7 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
     return {
       isValid: true,
       tier: 'subscribed',
-      deviceId,
+      deviceId: 'test-user',
       userId: 'test-user',
     };
   }
@@ -70,10 +70,13 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
   const { isValid: hasSubscription, userId } = await validateSubscriptionWithId(env, token);
 
   if (hasSubscription) {
+    // Use userId as deviceId for authenticated users so usage tracking is
+    // consistent regardless of which client sends the request (Pi agent
+    // doesn't send X-Device-Id, billing page does — using userId unifies them).
     return {
       isValid: true,
       tier: 'subscribed',
-      deviceId,
+      deviceId: userId || headerDeviceId,
       userId,
     };
   }
@@ -83,11 +86,12 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (UUID_REGEX.test(token)) {
     console.log('UUID token detected without subscription, granting logged_in tier');
+    const resolvedUserId = userId || token;
     return {
       isValid: true,
       tier: 'logged_in',
-      deviceId,
-      userId: userId || token,
+      deviceId: resolvedUserId,
+      userId: resolvedUserId,
     };
   }
 
@@ -98,7 +102,7 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
     return {
       isValid: true,
       tier: 'logged_in',
-      deviceId,
+      deviceId: token,
       userId: token,
     };
   }
@@ -106,23 +110,25 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
   // Check if it's a valid Clerk token (logged in but no subscription)
   const clerkResult = await verifyClerkToken(env, token);
   if (clerkResult.valid) {
+    const resolvedUserId = clerkResult.userId || token;
     return {
       isValid: true,
       tier: 'logged_in',
-      deviceId,
-      userId: clerkResult.userId || token, // Use clerk user_id (user_xxx) for credit lookups
+      deviceId: resolvedUserId,
+      userId: resolvedUserId,
     };
   }
 
   // Check if it's a valid screenpipe JWT token
   const screenpipeUser = await validateScreenpipeToken(token);
   if (screenpipeUser.isValid) {
+    const resolvedUserId = screenpipeUser.userId || headerDeviceId;
     // Check if the user has subscription
     if (screenpipeUser.hasSubscription) {
       return {
         isValid: true,
         tier: 'subscribed',
-        deviceId,
+        deviceId: resolvedUserId,
         userId: screenpipeUser.userId,
       };
     }
@@ -130,7 +136,7 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
     return {
       isValid: true,
       tier: 'logged_in',
-      deviceId,
+      deviceId: resolvedUserId,
       userId: screenpipeUser.userId,
     };
   }
@@ -141,7 +147,7 @@ export async function validateAuth(request: Request, env: Env): Promise<AuthResu
   return {
     isValid: true,
     tier: 'anonymous',
-    deviceId,
+    deviceId: headerDeviceId,
   };
 }
 

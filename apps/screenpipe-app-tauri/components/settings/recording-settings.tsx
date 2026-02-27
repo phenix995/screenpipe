@@ -1037,11 +1037,10 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         </Card>
         )}
 
-        {/* Transcription Mode - only for local Whisper engines, hidden when weak hardware + large model */}
+        {/* Transcription Mode - only for local Whisper engines */}
         {!settings.disableAudio && settings.audioTranscriptionEngine !== "deepgram" &&
          settings.audioTranscriptionEngine !== "screenpipe-cloud" &&
-         settings.audioTranscriptionEngine !== "disabled" &&
-         !(hwCapability?.isWeakForLargeModel && settings.audioTranscriptionEngine.includes("large")) && (
+         settings.audioTranscriptionEngine !== "disabled" && (
           <Card className="border-border bg-card">
             <CardContent className="px-3 py-2.5">
               <div className="flex items-center justify-between">
@@ -1049,17 +1048,17 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   <Zap className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Smart transcription
-                      <HelpTooltip text="When enabled, defers Whisper inference until your system is idle. Useful during video calls (Zoom, Meet, Teams) to avoid slowdowns. Audio capture continues uninterrupted — transcription catches up when you're done." />
+                      Batch transcription
+                      <HelpTooltip text="Accumulates longer audio chunks (30s-5min) using silence-gap detection before sending to Whisper. Gives the model more context for better transcription quality and speaker diarization." />
                     </h3>
-                    <p className="text-xs text-muted-foreground">Pause transcription during heavy workloads</p>
+                    <p className="text-xs text-muted-foreground">Longer audio chunks for better transcription quality</p>
                   </div>
                 </div>
                 <Switch
                   id="transcriptionMode"
-                  checked={(settings.transcriptionMode ?? "realtime") === "smart"}
+                  checked={["smart", "batch"].includes(settings.transcriptionMode ?? "realtime")}
                   onCheckedChange={(checked) =>
-                    handleSettingsChange({ transcriptionMode: checked ? "smart" : "realtime" }, true)
+                    handleSettingsChange({ transcriptionMode: checked ? "batch" : "realtime" }, true)
                   }
                 />
               </div>

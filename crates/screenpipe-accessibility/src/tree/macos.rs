@@ -242,8 +242,18 @@ impl MacosTreeWalker {
         }
 
         // 2. Get the focused window via AX API
-        let ax_app = ax::UiElement::with_app_pid(pid);
+        let mut ax_app = ax::UiElement::with_app_pid(pid);
         let _ = ax_app.set_messaging_timeout_secs(self.config.element_timeout_secs);
+
+        // Enable accessibility for Chromium/Electron apps. These apps only build
+        // their DOM accessibility tree when they detect an assistive technology.
+        // Setting AXEnhancedUserInterface = true signals "a screen reader is active"
+        // and causes the renderer to materialize the full AX tree.
+        // Ref: https://codereview.chromium.org/6909013
+        // Ref: https://github.com/electron/electron/issues/7206
+        let eui_attr_name = cf::String::from_str("AXEnhancedUserInterface");
+        let eui_attr = ax::Attr::with_string(&eui_attr_name);
+        let _ = ax_app.set_attr(&eui_attr, cf::Boolean::value_true());
 
         let window_val = match ax_app.attr_value(ax::attr::focused_window()) {
             Ok(v) => v,
@@ -306,8 +316,8 @@ impl MacosTreeWalker {
 
         let text_content = state.text_buffer;
         // Don't bail on empty text — we still need the app_name and window_name
-        // for frame metadata. Chrome/Electron apps often return empty accessibility
-        // text but the app/window detection above already succeeded.
+        // for frame metadata. Some apps may return empty text on the first walk
+        // after AXEnhancedUserInterface is set (Chromium builds the tree async).
 
         // Truncate if needed
         let text_content = if text_content.len() > self.config.max_text_length {
@@ -764,4 +774,5 @@ mod tests {
         // Should complete reasonably quickly (< 5s even with IPC delays)
         assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
+
 }

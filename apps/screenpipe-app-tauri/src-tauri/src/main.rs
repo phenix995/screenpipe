@@ -59,6 +59,7 @@ mod space_monitor;
 mod sync;
 mod reminders;
 mod calendar;
+mod ics_calendar;
 mod pi;
 mod embedded_server;
 mod suggestions;
@@ -1240,6 +1241,11 @@ async fn main() {
                 calendar::calendar_authorize,
                 calendar::calendar_get_events,
                 calendar::calendar_get_current_meeting,
+                // ICS Calendar commands
+                ics_calendar::ics_calendar_get_entries,
+                ics_calendar::ics_calendar_save_entries,
+                ics_calendar::ics_calendar_test_url,
+                ics_calendar::ics_calendar_get_upcoming,
                 // Voice training
                 voice_training::train_voice,
                 // Suggestions
@@ -1259,6 +1265,7 @@ async fn main() {
             .typ::<reminders::ScanResult>()
             .typ::<calendar::CalendarStatus>()
             .typ::<calendar::CalendarEventItem>()
+            .typ::<store::IcsCalendarEntry>()
             .typ::<suggestions::CachedSuggestions>()
             .typ::<suggestions::Suggestion>()
             .typ::<hardware::HardwareCapability>();
@@ -1457,6 +1464,11 @@ async fn main() {
             calendar::calendar_authorize,
             calendar::calendar_get_events,
             calendar::calendar_get_current_meeting,
+            // ICS Calendar commands
+            ics_calendar::ics_calendar_get_entries,
+            ics_calendar::ics_calendar_save_entries,
+            ics_calendar::ics_calendar_test_url,
+            ics_calendar::ics_calendar_get_upcoming,
             // Rollback commands
             commands::rollback_to_version,
             // OCR commands
@@ -2095,6 +2107,13 @@ async fn main() {
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                 calendar::start_calendar_events_publisher().await;
+            });
+
+            // Start ICS calendar poller (polls ICS feeds every 10 min)
+            let ics_app_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+                ics_calendar::start_ics_calendar_poller(ics_app_handle).await;
             });
 
             // Auto-start cloud sync if it was enabled

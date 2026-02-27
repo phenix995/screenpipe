@@ -76,16 +76,16 @@ pub enum CliTranscriptionMode {
     /// Transcribe immediately as audio is captured (default)
     #[clap(name = "realtime")]
     Realtime,
-    /// Defer local Whisper inference to idle periods (CPU < threshold)
-    #[clap(name = "smart")]
-    Smart,
+    /// Accumulate longer audio batches for better transcription quality
+    #[clap(name = "batch", alias = "smart")]
+    Batch,
 }
 
 impl From<CliTranscriptionMode> for TranscriptionMode {
     fn from(cli_mode: CliTranscriptionMode) -> Self {
         match cli_mode {
             CliTranscriptionMode::Realtime => TranscriptionMode::Realtime,
-            CliTranscriptionMode::Smart => TranscriptionMode::Smart,
+            CliTranscriptionMode::Batch => TranscriptionMode::Batch,
         }
     }
 }
@@ -176,7 +176,7 @@ pub struct Cli {
     #[arg(long, hide = true)]
     pub auto_destruct_pid: Option<u32>,
 
-    /// Audio transcription scheduling mode
+    /// Audio transcription scheduling mode: realtime (default) or batch (longer chunks for quality)
     #[arg(long, value_enum, default_value_t = CliTranscriptionMode::Realtime)]
     pub transcription_mode: CliTranscriptionMode,
 
@@ -371,7 +371,7 @@ pub struct RecordArgs {
     #[arg(long, hide = true)]
     pub auto_destruct_pid: Option<u32>,
 
-    /// Audio transcription scheduling mode: realtime (default) or smart (defer to idle)
+    /// Audio transcription scheduling mode: realtime (default) or batch (longer chunks for quality)
     #[arg(long, value_enum, default_value_t = CliTranscriptionMode::Realtime)]
     pub transcription_mode: CliTranscriptionMode,
 

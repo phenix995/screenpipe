@@ -19,7 +19,7 @@
 //!
 //! - **macOS**: Full support via CGEventTap and Accessibility APIs
 //! - **Windows**: Full support via SetWindowsHookEx and UI Automation
-//! - **Linux**: Not supported (feature gated)
+//! - **Linux**: Full support via AT-SPI2 (D-Bus) and evdev
 //!
 //! ## Privacy
 //!

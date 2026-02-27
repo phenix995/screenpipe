@@ -11,6 +11,13 @@ The API runs at `http://localhost:3030`.
 
 Full API reference (60+ endpoints): https://docs.screenpi.pe/llms-full.txt
 
+## Shell: pick the right one for the OS
+
+- **macOS/Linux** → `bash`, `curl`, `date -u -v-1H +%Y-%m-%dT%H:%M:%SZ`
+- **Windows** → `powershell`, `curl.exe` (not the alias), `(Get-Date).ToUniversalTime().AddHours(-1).ToString("yyyy-MM-ddTHH:mm:ssZ")`
+
+All examples below use bash. On Windows, adapt: use `powershell`, replace `curl` with `curl.exe`, replace `$(date …)` with the PowerShell equivalent, replace `/tmp/` with `$env:TEMP\`, replace `~` with `$env:USERPROFILE`.
+
 ## Search API
 
 ```bash
@@ -128,7 +135,6 @@ curl "http://localhost:3030/search?app_name=Google%20Chrome&content_type=ocr&lim
 You can fetch actual screenshot frames from search results. Each OCR result has a `frame_id`.
 
 ```bash
-# Get a specific frame as an image
 curl -o /tmp/frame.png "http://localhost:3030/frames/{frame_id}"
 ```
 

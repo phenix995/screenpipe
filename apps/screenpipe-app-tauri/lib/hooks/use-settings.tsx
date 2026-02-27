@@ -48,7 +48,7 @@ export type AIPreset = {
 	  }
 	| {
 			provider: "custom";
-			apiKey?: string;
+			apiKey: string;
 	  }
 	| {
 			provider: "pi";
@@ -92,8 +92,8 @@ export type Settings = SettingsStore & {
 	adaptiveFps?: boolean;
 	enableInputCapture?: boolean;
 	enableAccessibility?: boolean;
-	/** Audio transcription scheduling: "realtime" (default) or "smart" (defer to idle) */
-	transcriptionMode?: "realtime" | "smart";
+	/** Audio transcription scheduling: "realtime" (default) or "batch" (longer chunks for quality) */
+	transcriptionMode?: "realtime" | "smart" | "batch";
 	/** User's name for speaker identification — input device audio will be labeled with this name */
 	userName?: string;
 	/** When true, screen capture continues but OCR text extraction is skipped (saves CPU) */

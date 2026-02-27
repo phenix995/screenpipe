@@ -17,6 +17,7 @@ import { join, homeDir } from "@tauri-apps/api/path";
 import { AppleIntelligenceCard } from "./apple-intelligence-card";
 import { CalendarCard } from "./calendar-card";
 import { GoogleCalendarCard } from "./google-calendar-card";
+import { IcsCalendarCard } from "./ics-calendar-card";
 
 const GITHUB_RELEASES_API = "https://api.github.com/repos/screenpipe/screenpipe/releases";
 
@@ -620,6 +621,9 @@ export function ConnectionsSection() {
 
         {/* Google Calendar (cloud) */}
         <GoogleCalendarCard />
+
+        {/* ICS Calendar (subscription feeds) */}
+        <IcsCalendarCard />
 
         {/* Docs link */}
         <button

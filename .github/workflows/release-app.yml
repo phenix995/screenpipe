@@ -767,53 +767,64 @@ jobs:
 
           rm -f "$CERT_PATH"
 
-          # Import full Apple certificate chain so codesign can verify trust
+          # Import full Apple certificate chain so codesign can verify trust.
+          # Always re-download to avoid stale/corrupt cached files.
           mkdir -p ~/apple-certs
 
+          echo "=== Downloading Apple CA certificates ==="
+
           # Apple Root CA
-          if [ ! -f ~/apple-certs/AppleRootCA.cer ]; then
-            curl -sL -o ~/apple-certs/AppleRootCA.cer \
-              "https://www.apple.com/appleca/AppleIncRootCertificate.cer"
-          fi
-          security import ~/apple-certs/AppleRootCA.cer \
-            -t cert -k "$BUILD_KC" 2>/dev/null || true
+          curl -sfL -o ~/apple-certs/AppleRootCA.cer \
+            "https://www.apple.com/appleca/AppleIncRootCertificate.cer"
+          echo "  Downloaded AppleRootCA.cer ($(wc -c < ~/apple-certs/AppleRootCA.cer) bytes)"
 
           # Apple WWDR (Worldwide Developer Relations) G2
-          if [ ! -f ~/apple-certs/AppleWWDRCAG2.cer ]; then
-            curl -sL -o ~/apple-certs/AppleWWDRCAG2.cer \
-              "https://www.apple.com/certificateauthority/AppleWWDRCAG2.cer"
-          fi
-          security import ~/apple-certs/AppleWWDRCAG2.cer \
-            -t cert -k "$BUILD_KC" 2>/dev/null || true
+          curl -sfL -o ~/apple-certs/AppleWWDRCAG2.cer \
+            "https://www.apple.com/certificateauthority/AppleWWDRCAG2.cer"
+          echo "  Downloaded AppleWWDRCAG2.cer ($(wc -c < ~/apple-certs/AppleWWDRCAG2.cer) bytes)"
 
           # Developer ID Certification Authority (original, for pre-2024 certs)
-          if [ ! -f ~/apple-certs/DeveloperIDCA.cer ]; then
-            curl -sL -o ~/apple-certs/DeveloperIDCA.cer \
-              "https://www.apple.com/certificateauthority/DeveloperIDCA.cer"
-          fi
-          security import ~/apple-certs/DeveloperIDCA.cer \
-            -t cert -k "$BUILD_KC" 2>/dev/null || true
+          curl -sfL -o ~/apple-certs/DeveloperIDCA.cer \
+            "https://www.apple.com/certificateauthority/DeveloperIDCA.cer"
+          echo "  Downloaded DeveloperIDCA.cer ($(wc -c < ~/apple-certs/DeveloperIDCA.cer) bytes)"
 
           # Developer ID Certification Authority G2
-          if [ ! -f ~/apple-certs/DeveloperIDG2CA.cer ]; then
-            curl -sL -o ~/apple-certs/DeveloperIDG2CA.cer \
-              "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer"
-          fi
-          security import ~/apple-certs/DeveloperIDG2CA.cer \
-            -t cert -k "$BUILD_KC" 2>/dev/null || true
+          curl -sfL -o ~/apple-certs/DeveloperIDG2CA.cer \
+            "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer"
+          echo "  Downloaded DeveloperIDG2CA.cer ($(wc -c < ~/apple-certs/DeveloperIDG2CA.cer) bytes)"
+
+          echo "=== Importing CA certs into build keychain ==="
+
+          # Import certs into build keychain
+          for cert in AppleRootCA AppleWWDRCAG2 DeveloperIDCA DeveloperIDG2CA; do
+            security import ~/apple-certs/${cert}.cer -t cert -k "$BUILD_KC" 2>&1 || echo "  (import ${cert}: already exists or skipped)"
+          done
+
+          # Explicitly set trust for root CA and intermediate CAs.
+          # This is critical on self-hosted runners (e.g. Mac Mini) where
+          # SystemRootCertificates.keychain may not be accessible to codesign.
+          echo "=== Setting trust policies ==="
+          security add-trusted-cert -r trustRoot -p codeSign -k "$BUILD_KC" \
+            ~/apple-certs/AppleRootCA.cer 2>&1 || echo "  (trust AppleRootCA: already set)"
+          security add-trusted-cert -r unspecified -p codeSign -k "$BUILD_KC" \
+            ~/apple-certs/DeveloperIDCA.cer 2>&1 || echo "  (trust DeveloperIDCA: already set)"
+          security add-trusted-cert -r unspecified -p codeSign -k "$BUILD_KC" \
+            ~/apple-certs/DeveloperIDG2CA.cer 2>&1 || echo "  (trust DeveloperIDG2CA: already set)"
 
           # Ensure login keychain + System Roots are in the search list
-          # Include SystemRootCertificates.keychain for the Apple Root CA trust anchor
           security list-keychains -d user -s "$BUILD_KC" \
             "$HOME/Library/Keychains/login.keychain-db" \
             "/Library/Keychains/System.keychain" \
             "/System/Library/Keychains/SystemRootCertificates.keychain"
 
-          # Verify signing identity is available
+          # Verify signing identity is available and chain is valid
           echo "=== Keychain search list ==="
           security list-keychains -d user
           echo "=== Signing identities ==="
           security find-identity -v -p codesigning "$BUILD_KC" 2>&1 | tail -5
+          echo "=== Certificate chain verification ==="
+          security find-certificate -a -p "$BUILD_KC" | grep -c "BEGIN CERTIFICATE" || true
+          echo "certificates found in build keychain"
           echo "Build keychain ready at $BUILD_KC"
 
       - name: Compute Tauri build args
@@ -969,29 +980,38 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
         run: |
-          # Upload helper with retry and large multipart threshold to avoid
-          # R2 TLS failures (SSLV3_ALERT_BAD_RECORD_MAC) on self-hosted runners.
-          # Setting multipart_threshold to 500MB forces single-part upload for
-          # tar.gz (~200MB) and DMG files, avoiding the flaky multipart path.
-          export AWS_CONFIG_FILE=$(mktemp)
-          cat > "$AWS_CONFIG_FILE" <<AWSCFG
-          [default]
-          s3 =
-            multipart_threshold = 500MB
-            max_concurrent_requests = 1
-          AWSCFG
-
+          # Upload helper: tries aws s3 cp first, falls back to curl with
+          # presigned URL. The MacBook self-hosted runner has persistent TLS
+          # failures (SSLV3_ALERT_BAD_RECORD_MAC) with aws cli's Python SSL,
+          # but curl uses macOS SecureTransport which works reliably.
           upload_with_retry() {
             local src="$1" dst="$2"
-            for attempt in 1 2 3 4 5; do
+            local bucket_path="${dst#s3://}"
+            local r2_key="${bucket_path#*/}"
+            local bucket="${bucket_path%%/*}"
+
+            # Try aws cli first (2 attempts)
+            for attempt in 1 2; do
               if aws s3 cp "$src" "$dst" --endpoint-url "$R2_ENDPOINT" 2>&1; then
-                echo "  ✅ $(basename "$src")"
+                echo "  ✅ $(basename "$src") (aws)"
                 return 0
               fi
-              echo "  ⚠️ attempt $attempt failed for $(basename "$src"), retrying in $((attempt * 10))s..."
+              echo "  ⚠️ aws attempt $attempt failed for $(basename "$src")"
+              sleep 5
+            done
+
+            # Fallback: presigned URL + curl (macOS SecureTransport TLS)
+            echo "  🔄 falling back to curl for $(basename "$src")..."
+            for attempt in 1 2 3; do
+              PRESIGNED=$(aws s3 presign "$dst" --endpoint-url "$R2_ENDPOINT" --expires-in 3600 2>/dev/null)
+              if [ -n "$PRESIGNED" ] && curl --retry 3 --retry-delay 5 -sf -T "$src" "$PRESIGNED" 2>&1; then
+                echo "  ✅ $(basename "$src") (curl)"
+                return 0
+              fi
+              echo "  ⚠️ curl attempt $attempt failed for $(basename "$src")"
               sleep $((attempt * 10))
             done
-            echo "  ❌ failed to upload $(basename "$src") after 5 attempts"
+            echo "  ❌ failed to upload $(basename "$src") after all attempts"
             return 1
           }
 
@@ -1146,25 +1166,27 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
         run: |
-          export AWS_CONFIG_FILE=$(mktemp)
-          cat > "$AWS_CONFIG_FILE" <<AWSCFG
-          [default]
-          s3 =
-            multipart_threshold = 500MB
-            max_concurrent_requests = 1
-          AWSCFG
-
           upload_with_retry() {
             local src="$1" dst="$2"
-            for attempt in 1 2 3 4 5; do
+            for attempt in 1 2; do
               if aws s3 cp "$src" "$dst" --endpoint-url "$R2_ENDPOINT" 2>&1; then
-                echo "  ✅ $(basename "$src")"
+                echo "  ✅ $(basename "$src") (aws)"
                 return 0
               fi
-              echo "  ⚠️ attempt $attempt failed for $(basename "$src"), retrying in $((attempt * 10))s..."
+              echo "  ⚠️ aws attempt $attempt failed for $(basename "$src")"
+              sleep 5
+            done
+            echo "  🔄 falling back to curl for $(basename "$src")..."
+            for attempt in 1 2 3; do
+              PRESIGNED=$(aws s3 presign "$dst" --endpoint-url "$R2_ENDPOINT" --expires-in 3600 2>/dev/null)
+              if [ -n "$PRESIGNED" ] && curl --retry 3 --retry-delay 5 -sf -T "$src" "$PRESIGNED" 2>&1; then
+                echo "  ✅ $(basename "$src") (curl)"
+                return 0
+              fi
+              echo "  ⚠️ curl attempt $attempt failed for $(basename "$src")"
               sleep $((attempt * 10))
             done
-            echo "  ❌ failed to upload $(basename "$src") after 5 attempts"
+            echo "  ❌ failed to upload $(basename "$src") after all attempts"
             return 1
           }
           VERSION=$(grep '^version = ' apps/screenpipe-app-tauri/src-tauri/Cargo.toml | sed 's/version = "\(.*\)"/\1/')

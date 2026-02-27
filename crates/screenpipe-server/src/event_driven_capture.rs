@@ -591,6 +591,18 @@ async fn do_capture(
             debug!("screen unlocked: app '{}' detected on monitor {}", app, monitor_id);
             crate::sleep_monitor::set_screen_locked(false);
         }
+    } else if crate::sleep_monitor::screen_is_locked() {
+        // No app name detected (accessibility tree failed) AND screen is locked.
+        // This is the common case when locked via Cmd+Ctrl+Q — the tree walker
+        // can't read loginwindow's UI so app_name comes back None/"Unknown".
+        debug!(
+            "skipping capture: no app detected and screen is locked on monitor {}",
+            monitor_id
+        );
+        return Ok(CaptureOutput {
+            result: None,
+            image,
+        });
     }
 
     let ctx = CaptureContext {

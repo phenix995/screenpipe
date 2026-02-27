@@ -13,5 +13,5 @@ pub use migration_worker::{
     create_migration_worker, MigrationCommand, MigrationConfig, MigrationResponse, MigrationStatus,
     MigrationWorker,
 };
-pub use text_normalizer::expand_search_query;
+pub use text_normalizer::{expand_search_query, sanitize_fts5_query};
 pub use types::*;

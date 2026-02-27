@@ -4,8 +4,10 @@
 
 //! Sleep/Wake & Screen-Lock Monitor
 //!
-//! Listens for system sleep and wake events using NSWorkspace notifications
-//! (macOS) or Win32 desktop polling (Windows).
+//! macOS: polls `CGSessionCopyCurrentDictionary` every 2s to detect screen lock
+//! (catches Cmd+Ctrl+Q, menu lock, hot corner, auto-lock, display sleep).
+//! Also listens for NSWorkspace sleep/wake notifications for the `RECENTLY_WOKE` flag.
+//! Windows: polls `OpenInputDesktop` every 5s.
 //! Exposes an `screen_is_locked()` flag so capture loops can skip work while
 //! the screen is locked / screensaver is active.
 
@@ -47,8 +49,64 @@ pub fn set_screen_locked(locked: bool) {
     SCREEN_IS_LOCKED.store(locked, Ordering::SeqCst);
 }
 
+/// Check whether the screen is currently locked by querying the macOS
+/// session dictionary. Uses `CGSessionCopyCurrentDictionary` to read the
+/// `CGSSessionScreenIsLocked` key — this catches ALL lock methods
+/// (Cmd+Ctrl+Q, menu lock, hot corner, auto-lock, display sleep).
+#[cfg(target_os = "macos")]
+fn check_screen_locked_cgsession() -> bool {
+    use std::ffi::{c_char, c_void, CString};
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn CGSessionCopyCurrentDictionary() -> *const c_void;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
+        fn CFBooleanGetValue(boolean: *const c_void) -> u8;
+        fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            c_str: *const c_char,
+            encoding: u32,
+        ) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+
+    unsafe {
+        let dict = CGSessionCopyCurrentDictionary();
+        if dict.is_null() {
+            return false;
+        }
+
+        let key_cstr = CString::new("CGSSessionScreenIsLocked").unwrap();
+        let key =
+            CFStringCreateWithCString(std::ptr::null(), key_cstr.as_ptr(), K_CF_STRING_ENCODING_UTF8);
+        if key.is_null() {
+            CFRelease(dict);
+            return false;
+        }
+
+        let value = CFDictionaryGetValue(dict, key);
+        let locked = if value.is_null() {
+            false
+        } else {
+            CFBooleanGetValue(value) != 0
+        };
+
+        CFRelease(key);
+        CFRelease(dict);
+        locked
+    }
+}
+
 /// Start the sleep/wake monitor on macOS
-/// This sets up NSWorkspace notification observers for sleep and wake events.
+/// This sets up NSWorkspace notification observers for sleep and wake events,
+/// plus a polling thread that checks `CGSessionCopyCurrentDictionary` every
+/// 2 seconds to reliably detect all lock methods (Cmd+Ctrl+Q, menu, etc.).
 /// Must be called from within a tokio runtime context so we can capture the handle.
 #[cfg(target_os = "macos")]
 pub fn start_sleep_monitor() {
@@ -68,15 +126,36 @@ pub fn start_sleep_monitor() {
         }
     };
 
+    // Check initial lock state before starting any capture.
+    let initial_locked = check_screen_locked_cgsession();
+    if initial_locked {
+        info!("Screen is locked at startup — setting SCREEN_IS_LOCKED");
+        SCREEN_IS_LOCKED.store(true, Ordering::SeqCst);
+    }
+
+    // Thread 1: Poll CGSessionCopyCurrentDictionary every 2s.
+    // This catches ALL lock methods (Cmd+Ctrl+Q, menu, hot corner, auto-lock)
+    // which NSWorkspace.screensDidSleep does NOT detect.
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let locked = check_screen_locked_cgsession();
+            let was_locked = SCREEN_IS_LOCKED.swap(locked, Ordering::SeqCst);
+            if locked != was_locked {
+                if locked {
+                    info!("Screen locked (CGSession poll)");
+                } else {
+                    info!("Screen unlocked (CGSession poll)");
+                }
+            }
+        }
+    });
+
+    // Thread 2: NSWorkspace notification observers for system sleep/wake.
+    // These are still useful for the RECENTLY_WOKE flag and telemetry.
     std::thread::spawn(move || {
-        // We need to run this on a thread with a run loop
-        // cidre's notification center requires the main run loop or a dedicated one
-
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Get the shared workspace - cidre returns Retained<Workspace> directly
             let workspace = ns::Workspace::shared();
-
-            // Get the workspace's notification center
             let mut notification_center: cidre::arc::Retained<ns::NotificationCenter> =
                 workspace.notification_center();
 
@@ -102,30 +181,6 @@ pub fn start_sleep_monitor() {
                 move |_notification| {
                     info!("System woke from sleep");
                     on_did_wake(&wake_handle);
-                },
-            );
-
-            // Subscribe to screens_did_sleep notification — marks screen as locked
-            let screens_sleep_name = ns::workspace::notification::screens_did_sleep();
-            let _screens_sleep_guard = notification_center.add_observer_guard(
-                screens_sleep_name,
-                None,
-                None,
-                |_notification| {
-                    info!("Screens went to sleep — marking screen as locked");
-                    SCREEN_IS_LOCKED.store(true, Ordering::SeqCst);
-                },
-            );
-
-            // Subscribe to screens_did_wake notification — marks screen as unlocked
-            let screens_wake_name = ns::workspace::notification::screens_did_wake();
-            let _screens_wake_guard = notification_center.add_observer_guard(
-                screens_wake_name,
-                None,
-                None,
-                |_notification| {
-                    info!("Screens woke up — marking screen as unlocked");
-                    SCREEN_IS_LOCKED.store(false, Ordering::SeqCst);
                 },
             );
 

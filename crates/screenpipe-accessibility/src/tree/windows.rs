@@ -207,17 +207,19 @@ impl TreeWalkerPlatform for WindowsTreeWalker {
         // Extract text from the tree (matching macOS text extraction behavior)
         let mut text_buffer = String::with_capacity(4096);
         let mut nodes = Vec::with_capacity(256);
+        let mut browser_url: Option<String> = None;
         extract_text_from_tree(
             &root,
             0,
             self.config.max_depth,
             &mut text_buffer,
             &mut nodes,
+            &mut browser_url,
         );
 
-        if text_buffer.is_empty() {
-            return Ok(None);
-        }
+        // Don't bail on empty text — we still need the app_name and window_name
+        // for frame metadata. Electron apps (Discord, Slack, etc.) often return
+        // sparse accessibility text but the app/window detection already succeeded.
 
         // Truncate if needed
         if text_buffer.len() > self.config.max_text_length {
@@ -248,7 +250,7 @@ impl TreeWalkerPlatform for WindowsTreeWalker {
             window_name,
             text_content: text_buffer,
             nodes,
-            browser_url: None,
+            browser_url,
             timestamp: Utc::now(),
             node_count,
             walk_duration,
@@ -269,6 +271,7 @@ fn extract_text_from_tree(
     max_depth: usize,
     buffer: &mut String,
     nodes: &mut Vec<AccessibilityTreeNode>,
+    browser_url: &mut Option<String>,
 ) {
     if depth > max_depth {
         return;
@@ -283,8 +286,10 @@ fn extract_text_from_tree(
 
     // Extract text from text-bearing elements
     if TEXT_TYPES.iter().any(|&t| ct.eq_ignore_ascii_case(t)) {
-        // Prefer value (actual content) for edit/document/combobox
-        if matches!(ct, "Edit" | "Document" | "ComboBox") {
+        // Prefer value (actual content) for edit/combobox
+        // Note: Document is handled separately below — its children are the
+        // actual web content tree in Electron/browser apps, so we must recurse.
+        if matches!(ct, "Edit" | "ComboBox") {
             if let Some(ref val) = node.value {
                 if !val.trim().is_empty() {
                     append_text(buffer, val);
@@ -292,7 +297,7 @@ fn extract_text_from_tree(
                         role: ct.to_string(),
                         text: val.trim().to_string(),
                         depth: depth.min(255) as u8,
-                        bounds: None, // TODO: read UIA bounding rectangle
+                        bounds: None,
                     });
                     // Don't recurse into text controls — their children are sub-elements of the same text
                     return;
@@ -300,30 +305,78 @@ fn extract_text_from_tree(
             }
         }
 
-        // Fall back to name (label/title)
-        if let Some(ref name) = node.name {
-            if !name.trim().is_empty() {
-                append_text(buffer, name);
-                nodes.push(AccessibilityTreeNode {
-                    role: ct.to_string(),
-                    text: name.trim().to_string(),
-                    depth: depth.min(255) as u8,
-                    bounds: None, // TODO: read UIA bounding rectangle
-                });
+        // Document nodes: extract URL as browser_url, then CONTINUE recursing.
+        // In Electron/browser apps (Discord, Slack, VS Code, etc.), the Document
+        // node is the root of the entire web content tree — its children are the
+        // actual UI elements (buttons, text, links, etc.).
+        if ct.eq_ignore_ascii_case("Document") {
+            if let Some(ref val) = node.value {
+                let trimmed = val.trim();
+                if !trimmed.is_empty() {
+                    // If value looks like a URL, capture it as browser_url
+                    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                        if browser_url.is_none() {
+                            *browser_url = Some(trimmed.to_string());
+                        }
+                    } else {
+                        // Non-URL value — treat as text content
+                        append_text(buffer, trimmed);
+                        nodes.push(AccessibilityTreeNode {
+                            role: ct.to_string(),
+                            text: trimmed.to_string(),
+                            depth: depth.min(255) as u8,
+                            bounds: None,
+                        });
+                    }
+                }
+            }
+            // Always recurse into Document children — they contain the actual content
+        } else {
+            // Fall back to name (label/title) for non-Document text types
+            if let Some(ref name) = node.name {
+                if !name.trim().is_empty() {
+                    append_text(buffer, name);
+                    nodes.push(AccessibilityTreeNode {
+                        role: ct.to_string(),
+                        text: name.trim().to_string(),
+                        depth: depth.min(255) as u8,
+                        bounds: None,
+                    });
+                }
             }
         }
-    } else if ct.eq_ignore_ascii_case("Group") || ct.eq_ignore_ascii_case("Pane") {
-        // Groups/Panes: only extract if they have a direct value
+    } else if ct.eq_ignore_ascii_case("Group") || ct.eq_ignore_ascii_case("Pane") || ct.eq_ignore_ascii_case("Custom") {
+        // Groups/Panes/Custom: extract if they have a name or value
+        // Custom elements are common in Electron apps (web components mapped to UIA)
         if let Some(ref val) = node.value {
             if !val.trim().is_empty() {
                 append_text(buffer, val);
+                nodes.push(AccessibilityTreeNode {
+                    role: ct.to_string(),
+                    text: val.trim().to_string(),
+                    depth: depth.min(255) as u8,
+                    bounds: None,
+                });
+            }
+        } else if ct.eq_ignore_ascii_case("Custom") {
+            // Custom elements in Electron apps often have names
+            if let Some(ref name) = node.name {
+                if !name.trim().is_empty() {
+                    append_text(buffer, name);
+                    nodes.push(AccessibilityTreeNode {
+                        role: ct.to_string(),
+                        text: name.trim().to_string(),
+                        depth: depth.min(255) as u8,
+                        bounds: None,
+                    });
+                }
             }
         }
     }
 
     // Recurse into children
     for child in &node.children {
-        extract_text_from_tree(child, depth + 1, max_depth, buffer, nodes);
+        extract_text_from_tree(child, depth + 1, max_depth, buffer, nodes, browser_url);
     }
 }
 
@@ -429,7 +482,8 @@ mod tests {
 
         let mut buf = String::new();
         let mut nodes = Vec::new();
-        extract_text_from_tree(&tree, 0, 10, &mut buf, &mut nodes);
+        let mut url = None;
+        extract_text_from_tree(&tree, 0, 10, &mut buf, &mut nodes, &mut url);
 
         // Text node's name should be captured
         assert!(
@@ -448,6 +502,115 @@ mod tests {
             !buf.contains("icon.png"),
             "Image should be skipped, got: {}",
             buf
+        );
+    }
+
+    #[test]
+    fn test_document_node_recurses_into_children() {
+        use crate::events::AccessibilityNode;
+
+        // Simulates an Electron app (like Discord): Document node with URL value
+        // and children containing the actual web content.
+        let tree = AccessibilityNode {
+            control_type: "Pane".to_string(),
+            name: Some("Discord".to_string()),
+            automation_id: None,
+            class_name: None,
+            value: None,
+            bounds: None,
+            is_enabled: true,
+            is_focused: None,
+            is_keyboard_focusable: None,
+            children: vec![AccessibilityNode {
+                control_type: "Document".to_string(),
+                name: None,
+                automation_id: None,
+                class_name: None,
+                value: Some("https://discordapp.com/channels/123/456".to_string()),
+                bounds: None,
+                is_enabled: true,
+                is_focused: None,
+                is_keyboard_focusable: None,
+                children: vec![
+                    AccessibilityNode {
+                        control_type: "Text".to_string(),
+                        name: Some("Welcome to the server".to_string()),
+                        automation_id: None,
+                        class_name: None,
+                        value: None,
+                        bounds: None,
+                        is_enabled: true,
+                        is_focused: None,
+                        is_keyboard_focusable: None,
+                        children: vec![],
+                    },
+                    AccessibilityNode {
+                        control_type: "Button".to_string(),
+                        name: Some("Send Message".to_string()),
+                        automation_id: None,
+                        class_name: None,
+                        value: None,
+                        bounds: None,
+                        is_enabled: true,
+                        is_focused: None,
+                        is_keyboard_focusable: None,
+                        children: vec![],
+                    },
+                    AccessibilityNode {
+                        control_type: "Custom".to_string(),
+                        name: Some("User: john_doe".to_string()),
+                        automation_id: None,
+                        class_name: None,
+                        value: None,
+                        bounds: None,
+                        is_enabled: true,
+                        is_focused: None,
+                        is_keyboard_focusable: None,
+                        children: vec![],
+                    },
+                ],
+            }],
+        };
+
+        let mut buf = String::new();
+        let mut nodes = Vec::new();
+        let mut url = None;
+        extract_text_from_tree(&tree, 0, 30, &mut buf, &mut nodes, &mut url);
+
+        // URL should be captured as browser_url, NOT as text
+        assert_eq!(
+            url.as_deref(),
+            Some("https://discordapp.com/channels/123/456"),
+            "Document URL should be captured as browser_url"
+        );
+        assert!(
+            !buf.contains("discordapp.com"),
+            "URL should not appear in text buffer, got: {}",
+            buf
+        );
+
+        // Children of Document should be captured (the bug was: they were skipped)
+        assert!(
+            buf.contains("Welcome to the server"),
+            "Document children text should be captured, got: {}",
+            buf
+        );
+        assert!(
+            buf.contains("Send Message"),
+            "Document children buttons should be captured, got: {}",
+            buf
+        );
+        assert!(
+            buf.contains("User: john_doe"),
+            "Custom elements should be captured, got: {}",
+            buf
+        );
+
+        // Should have nodes for text, button, and custom
+        assert!(
+            nodes.len() >= 3,
+            "Should capture at least 3 nodes from Document children, got {}",
+            nodes.len()
         );
     }
 

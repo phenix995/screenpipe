@@ -444,7 +444,7 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> JsonResponse<He
                 transcription_mode: if audio_snap.segments_deferred > 0
                     || audio_snap.segments_batch_processed > 0
                 {
-                    Some("smart".to_string())
+                    Some("batch".to_string())
                 } else {
                     Some("realtime".to_string())
                 },
