@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  windows-vm:
+    image: dockurr/windows
+    container_name: windows-build-vm
+    environment:
+      VERSION: "win11"
+      RAM_SIZE: "8G"
+      CPU_CORES: "4"
+      DISK_SIZE: "64G"
+    volumes:
+      # Mount project directory
+      - .:/shared/screenpipe
+      # Mount output directory
+      - C:\Users\Aurora\Documents\Build:/shared/output
+    devices:
+      - /dev/kvm
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8006:8006"  # Web interface (noVNC)
+      - "3389:3389/tcp"  # RDP
+      - "3389:3389/udp"
+    networks:
+      - windows-build
+    restart: unless-stopped
+    # The VM will boot and we need to manually install tools and run the build
+    # Or we can create a custom image with everything pre-installed
+
+networks:
+  windows-build:
+    driver: bridge

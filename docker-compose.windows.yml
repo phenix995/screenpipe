@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  screenpipe-windows-builder:
+    image: mcr.microsoft.com/windows/servercore:ltsc2022
+    volumes:
+      # Mount the current project directory
+      - .:C:\workspaces\screenpipe
+      # Mount output directory
+      - C:\Users\Aurora\Documents\Build:C:\output
+    working_dir: C:\workspaces\screenpipe
+    command: >
+      powershell -ExecutionPolicy Bypass -Command "
+        Write-Host '========================================' -ForegroundColor Green;
+        Write-Host 'Starting screenpipe Windows build...' -ForegroundColor Green;
+        Write-Host '========================================' -ForegroundColor Green;
+        
+        # Create output directory
+        New-Item -ItemType Directory -Force -Path C:\output;
+        
+        # Download and install Rust
+        Write-Host 'Installing Rust...' -ForegroundColor Yellow;
+        Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile C:\rustup-init.exe;
+        Start-Process -FilePath C:\rustup-init.exe -ArgumentList '-y' -Wait;
+        $env:PATH += ';C:\Users\ContainerAdministrator\.cargo\bin';
+        
+        # Verify Rust installation
+        rustc --version;
+        cargo --version;
+        
+        # Download and install Bun
+        Write-Host 'Installing Bun...' -ForegroundColor Yellow;
+        Invoke-WebRequest -Uri https://bun.sh/install.ps1 -OutFile C:\install-bun.ps1;
+        & C:\install-bun.ps1;
+        $env:PATH += ';C:\Users\ContainerAdministrator\.bun\bin';
+        
+        # Verify Bun installation
+        bun --version;
+        
+        # Install Node.js (required for Tauri)
+        Write-Host 'Installing Node.js...' -ForegroundColor Yellow;
+        Invoke-WebRequest -Uri https://nodejs.org/dist/v20.11.0/node-v20.11.0-x64.msi -OutFile C:\node.msi;
+        Start-Process -FilePath msiexec -ArgumentList '/i', 'C:\node.msi', '/quiet', '/norestart' -Wait;
+        $env:PATH += ';C:\Program Files\nodejs';
+        
+        # Install Visual Studio Build Tools
+        Write-Host 'Installing Visual Studio Build Tools...' -ForegroundColor Yellow;
+        Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vs_buildtools.exe -OutFile C:\vs_buildtools.exe;
+        Start-Process -FilePath C:\vs_buildtools.exe -ArgumentList '--quiet', '--wait', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--add', 'Microsoft.VisualStudio.Component.Windows11SDK.22621' -Wait;
+        
+        # Build Rust project
+        Write-Host '========================================' -ForegroundColor Green;
+        Write-Host 'Building Rust project...' -ForegroundColor Green;
+        Write-Host '========================================' -ForegroundColor Green;
+        cargo build --release;
+        
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host 'Rust build completed successfully!' -ForegroundColor Green;
+        } else {
+          Write-Host 'Rust build failed!' -ForegroundColor Red;
+          exit 1;
+        }
+        
+        # Build Tauri app
+        Write-Host '========================================' -ForegroundColor Green;
+        Write-Host 'Building Tauri app...' -ForegroundColor Green;
+        Write-Host '========================================' -ForegroundColor Green;
+        
+        Set-Location -Path C:\workspaces\screenpipe\apps\screenpipe-app-tauri;
+        bun install;
+        bun tauri build;
+        
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host 'Tauri build completed successfully!' -ForegroundColor Green;
+        } else {
+          Write-Host 'Tauri build failed!' -ForegroundColor Red;
+          exit 1;
+        }
+        
+        # Copy build artifacts
+        Write-Host '========================================' -ForegroundColor Green;
+        Write-Host 'Copying build artifacts...' -ForegroundColor Green;
+        Write-Host '========================================' -ForegroundColor Green;
+        
+        # Copy .exe files from Rust build
+        $rustExes = Get-ChildItem -Path C:\workspaces\screenpipe\target\release -Filter '*.exe' -File -ErrorAction SilentlyContinue;
+        foreach ($exe in $rustExes) {
+          Write-Host \"Copying Rust binary: $($exe.Name)\" -ForegroundColor Cyan;
+          Copy-Item -Path $exe.FullName -Destination 'C:\output\' -Force;
+        }
+        
+        # Copy Tauri build artifacts
+        $tauriExes = Get-ChildItem -Path C:\workspaces\screenpipe\apps\screenpipe-app-tauri\src-tauri\target\release -Filter '*.exe' -File -ErrorAction SilentlyContinue;
+        foreach ($exe in $tauriExes) {
+          Write-Host \"Copying Tauri binary: $($exe.Name)\" -ForegroundColor Cyan;
+          Copy-Item -Path $exe.FullName -Destination 'C:\output\' -Force;
+        }
+        
+        # Copy MSI installer if exists
+        $msiFiles = Get-ChildItem -Path C:\workspaces\screenpipe\apps\screenpipe-app-tauri\src-tauri\target\release\bundle -Filter '*.msi' -File -Recurse -ErrorAction SilentlyContinue;
+        foreach ($msi in $msiFiles) {
+          Write-Host \"Copying MSI installer: $($msi.Name)\" -ForegroundColor Cyan;
+          Copy-Item -Path $msi.FullName -Destination 'C:\output\' -Force;
+        }
+        
+        # Copy NSIS installer if exists
+        $nsisFiles = Get-ChildItem -Path C:\workspaces\screenpipe\apps\screenpipe-app-tauri\src-tauri\target\release\bundle -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue;
+        foreach ($nsis in $nsisFiles) {
+          if ($nsis.Name -like '*setup*') {
+            Write-Host \"Copying NSIS installer: $($nsis.Name)\" -ForegroundColor Cyan;
+            Copy-Item -Path $nsis.FullName -Destination 'C:\output\' -Force;
+          }
+        }
+        
+        Write-Host '========================================' -ForegroundColor Green;
+        Write-Host 'Build process completed!' -ForegroundColor Green;
+        Write-Host 'Artifacts in C:\output:' -ForegroundColor Green;
+        Get-ChildItem -Path C:\output | ForEach-Object { Write-Host $_.Name -ForegroundColor White };
+        Write-Host '========================================' -ForegroundColor Green;
+      "
+    # Windows containers require specific isolation
+    isolation: process

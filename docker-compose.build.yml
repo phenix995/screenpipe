@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  screenpipe-builder:
+    build:
+      context: ./.devcontainer
+      dockerfile: Dockerfile
+    volumes:
+      # Mount the current project directory to /workspaces/screenpipe in the container
+      - .:/workspaces/screenpipe
+      # Mount Windows output directory to /output in the container
+      - C:\Users\Aurora\Documents\Build:/output
+    working_dir: /workspaces/screenpipe
+    command: >
+      bash -c "
+        echo '========================================' &&
+        echo 'Starting screenpipe build process...' &&
+        echo '========================================' &&
+        
+        # Add cargo and bun to PATH
+        export PATH=\"\$HOME/.cargo/bin:\$HOME/.bun/bin:\$PATH\" &&
+        
+        # Create output directory if it doesn't exist
+        mkdir -p /output &&
+        
+        echo 'Step 1: Building Rust project with cargo...' &&
+        cargo build --release &&
+        echo 'Rust build completed successfully!' &&
+        
+        echo 'Step 2: Building Tauri app with bun...' &&
+        cd apps/screenpipe-app-tauri &&
+        bun install &&
+        bun tauri build &&
+        echo 'Tauri build completed successfully!' &&
+        
+        echo 'Step 3: Copying build artifacts to /output...' &&
+        
+        # Copy any .exe files from target/release
+        if find /workspaces/screenpipe/target/release -name '*.exe' -type f 2>/dev/null | grep -q .; then
+          echo 'Found .exe files in target/release - copying to /output' &&
+          find /workspaces/screenpipe/target/release -name '*.exe' -type f -exec cp {} /output/ \;
+        else
+          echo 'No .exe files found in target/release (expected for Linux container)' &&
+          echo 'Copying Linux binaries instead...' &&
+          find /workspaces/screenpipe/target/release -maxdepth 1 -type f -executable -exec cp {} /output/ \; 2>/dev/null || true
+        fi &&
+        
+        # Copy any .exe files from Tauri build (src-tauri/target/release)
+        if find /workspaces/screenpipe/apps/screenpipe-app-tauri/src-tauri/target/release -name '*.exe' -type f 2>/dev/null | grep -q .; then
+          echo 'Found .exe files in Tauri build - copying to /output' &&
+          find /workspaces/screenpipe/apps/screenpipe-app-tauri/src-tauri/target/release -name '*.exe' -type f -exec cp {} /output/ \;
+        else
+          echo 'No .exe files found in Tauri build (expected for Linux container)' &&
+          echo 'Copying Tauri Linux binaries instead...' &&
+          find /workspaces/screenpipe/apps/screenpipe-app-tauri/src-tauri/target/release -maxdepth 1 -type f -executable -exec cp {} /output/ \; 2>/dev/null || true
+        fi &&
+        
+        # Copy any .deb, .rpm, .AppImage, or other package files
+        find /workspaces/screenpipe/apps/screenpipe-app-tauri/src-tauri/target/release -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' 2>/dev/null | while read file; do
+          if [ -f \"\$file\" ]; then
+            echo \"Copying package file: \$file\" &&
+            cp \"\$file\" /output/
+          fi
+        done &&
+        
+        echo '========================================' &&
+        echo 'Build process completed!' &&
+        echo 'Artifacts copied to /output:' &&
+        ls -la /output/ &&
+        echo '========================================'
+      "
+    environment:
+      - CARGO_HOME=/home/vscode/.cargo
+      - RUSTUP_HOME=/home/vscode/.rustup
+    # Note: This container runs as root for easier file permissions in mounted volumes
+    user: root
