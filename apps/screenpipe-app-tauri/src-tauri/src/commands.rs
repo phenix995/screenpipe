@@ -343,51 +343,69 @@ pub async fn get_disk_usage(
     }
 }
 
-/// Open the screenpi.pe login page inside an in-app WebView.
-/// Intercepts the screenpipe:// deep-link redirect so we don't rely on
-/// Safari custom-scheme support (which can silently fail).
+/// Open the screenpi.pe login page.
+/// On Windows, opens in the system browser (WebView2 has issues with some auth
+/// providers; the registered deep-link scheme handles the redirect back).
+/// On macOS/Linux, uses an in-app WebView that intercepts the screenpipe://
+/// deep-link redirect (Safari blocks custom-scheme redirects).
 #[tauri::command]
 #[specta::specta]
 pub async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
-    use tauri::{WebviewUrl, WebviewWindowBuilder};
-
-    let label = "login-browser";
-
-    // If already open, just focus it
-    if let Some(w) = app_handle.get_webview_window(label) {
-        let _ = w.show();
-        let _ = w.set_focus();
+    // Windows: open in system browser — deep link is registered via
+    // tauri_plugin_deep_link::register_all() so the screenpipe:// redirect works
+    #[cfg(target_os = "windows")]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app_handle
+            .opener()
+            .open_url("https://screenpi.pe/login", None::<&str>)
+            .map_err(|e| e.to_string())?;
         return Ok(());
     }
 
-    let app_for_nav = app_handle.clone();
+    // macOS / Linux: in-app WebView to intercept the deep-link redirect
+    #[cfg(not(target_os = "windows"))]
+    {
+        use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-    WebviewWindowBuilder::new(
-        &app_handle,
-        label,
-        WebviewUrl::External("https://screenpi.pe/login".parse().unwrap()),
-    )
-    .title("sign in to screenpipe")
-    .inner_size(460.0, 700.0)
-    .focused(true)
-    .on_navigation(move |url| {
-        if url.scheme() == "screenpipe" {
-            info!("login window intercepted deep link: {}", url);
-            let _ = app_for_nav.emit("deep-link-received", url.to_string());
-            // Close the login window after a short delay to avoid
-            // closing before the event is delivered
-            if let Some(w) = app_for_nav.get_webview_window("login-browser") {
-                let _ = w.close();
-            }
-            false // block navigation to custom scheme
-        } else {
-            true // allow all https navigations (Clerk, OAuth providers, etc.)
+        let label = "login-browser";
+
+        // If already open, just focus it
+        if let Some(w) = app_handle.get_webview_window(label) {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return Ok(());
         }
-    })
-    .build()
-    .map_err(|e| e.to_string())?;
 
-    Ok(())
+        let app_for_nav = app_handle.clone();
+
+        WebviewWindowBuilder::new(
+            &app_handle,
+            label,
+            WebviewUrl::External("https://screenpi.pe/login".parse().unwrap()),
+        )
+        .title("sign in to screenpipe")
+        .inner_size(460.0, 700.0)
+        .focused(true)
+        .on_navigation(move |url| {
+            if url.scheme() == "screenpipe" {
+                info!("login window intercepted deep link: {}", url);
+                let _ = app_for_nav.emit("deep-link-received", url.to_string());
+                // Close the login window after a short delay to avoid
+                // closing before the event is delivered
+                if let Some(w) = app_for_nav.get_webview_window("login-browser") {
+                    let _ = w.close();
+                }
+                false // block navigation to custom scheme
+            } else {
+                true // allow all https navigations (Clerk, OAuth providers, etc.)
+            }
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
 }
 
 /// Open Google Calendar OAuth inside an in-app WebView.

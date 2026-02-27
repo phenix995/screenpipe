@@ -21,6 +21,8 @@ import {
   ExternalLink,
   Check,
   Users,
+  MoreHorizontal,
+  Plus,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -29,8 +31,16 @@ import { Input } from "@/components/ui/input";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { emit } from "@tauri-apps/api/event";
+import { showChatWithPrefill } from "@/lib/chat-utils";
 import { commands } from "@/lib/utils/tauri";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { useTeam } from "@/lib/hooks/use-team";
 import { useToast } from "@/components/ui/use-toast";
@@ -41,7 +51,7 @@ const PIPE_CREATION_PROMPT = `create a screenpipe pipe that does the following.
 
 ## what is screenpipe?
 
-screenpipe is a desktop app that continuously records your screen (OCR) and audio (transcription).
+screenpipe is a desktop app that continuously captures your screen text (via accessibility APIs, with OCR as fallback for apps that don't support accessibility) and audio (transcription).
 it runs a local API at http://localhost:3030 that lets you query everything you've seen, said, or heard.
 
 ## what is a pipe?
@@ -82,7 +92,7 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 ### query parameters
 - q: text search query (optional)
-- content_type: "all" | "ocr" | "audio" | "input" | "accessibility"
+- content_type: "all" | "ocr" | "audio" | "input" | "accessibility" (prefer "all" or "accessibility" for screen text; "ocr" is a legacy fallback)
 - limit: max results (default 20)
 - offset: pagination offset
 - start_time / end_time: ISO 8601 timestamps
@@ -197,6 +207,18 @@ interface PipeExecution {
   duration_ms: number | null;
 }
 
+function relativeTime(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const secs = Math.floor(ms / 1000);
@@ -206,19 +228,47 @@ function formatDuration(ms: number): string {
   return `${mins}:${String(remainSecs).padStart(2, "0")}`;
 }
 
-/** Extract human-readable text from Pi stdout, filtering out JSON event noise */
+/** Extract human-readable text from Pi JSON-mode stdout.
+ *  Parses structured events and pulls out only the text deltas
+ *  that form the actual assistant response. Falls back to showing
+ *  non-JSON lines as-is. */
 function cleanPipeStdout(raw: string): string {
-  return raw
-    .split("\n")
-    .filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      // Skip JSON event lines (Pi session/agent/message events)
-      if (trimmed.startsWith("{") && trimmed.endsWith("}")) return false;
-      return true;
-    })
-    .join("\n")
-    .trim();
+  const parts: string[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Try to parse as JSON event
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const evt = JSON.parse(trimmed);
+        // text_delta — the main assistant text stream
+        if (
+          evt.type === "message_update" &&
+          evt.assistantMessageEvent?.type === "text_delta" &&
+          evt.assistantMessageEvent.delta
+        ) {
+          parts.push(evt.assistantMessageEvent.delta);
+          continue;
+        }
+        // message_start may contain initial text content
+        if (evt.type === "message_start" && evt.message?.content) {
+          for (const block of evt.message.content) {
+            if (block.type === "text" && block.text) {
+              parts.push(block.text);
+            }
+          }
+          continue;
+        }
+        // Skip all other JSON events (session, agent_start, tool calls, etc.)
+        continue;
+      } catch {
+        // Not valid JSON — fall through to treat as plain text
+      }
+    }
+    // Non-JSON line — keep as-is
+    parts.push(trimmed);
+  }
+  return parts.join("").trim();
 }
 
 function ElapsedTimer({ startedAt }: { startedAt: string }) {
@@ -306,11 +356,20 @@ export function PipesSection() {
       .map((c) => c.key)
   );
 
-  const filteredPipes = pipes.filter((p) => {
-    if (pipeFilter === "all") return true;
-    if (pipeFilter === "team") return sharedPipeNames.has(p.config.name);
-    return !sharedPipeNames.has(p.config.name); // personal
-  });
+  const filteredPipes = pipes
+    .filter((p) => {
+      if (pipeFilter === "all") return true;
+      if (pipeFilter === "team") return sharedPipeNames.has(p.config.name);
+      return !sharedPipeNames.has(p.config.name); // personal
+    })
+    .sort((a, b) => {
+      // Enabled first
+      if (a.config.enabled !== b.config.enabled) return a.config.enabled ? -1 : 1;
+      // Then by last run time (most recent first)
+      const aTime = a.last_run ? new Date(a.last_run).getTime() : 0;
+      const bTime = b.last_run ? new Date(b.last_run).getTime() : 0;
+      return bTime - aTime;
+    });
 
   const sharePipeToTeam = async (pipe: PipeStatus) => {
     setSharingPipe(pipe.config.name);
@@ -647,33 +706,6 @@ export function PipesSection() {
         </div>
       </div>
 
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const form = e.currentTarget;
-          const input = form.querySelector("input") as HTMLInputElement;
-          const value = input?.value?.trim();
-          if (!value) return;
-          input.value = "";
-
-          // Open the chat window first
-          await commands.showWindow("Chat");
-          // Wait for chat to mount
-          await new Promise((r) => setTimeout(r, 200));
-          // Emit prefill with pipe creation prompt + user's idea, and auto-send
-          await emit("chat-prefill", {
-            context: PIPE_CREATION_PROMPT,
-            prompt: value,
-            autoSend: true,
-          });
-        }}
-      >
-        <Input
-          placeholder="describe a pipe to create..."
-          className="font-mono text-sm"
-        />
-      </form>
-
       {/* All | Personal | Shared with team tabs */}
       {team.team && (
         <div className="flex items-center gap-4 border-b border-border">
@@ -754,23 +786,23 @@ export function PipesSection() {
             const runningExec = recentExecs.find((e) => e.status === "running");
 
             return (
-            <Card key={pipe.config.name}>
+            <Card key={pipe.config.name} className={cn(!pipe.config.enabled && "opacity-50")}>
               <CardContent className="p-4">
                 {/* Header row */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => toggleExpand(pipe.config.name)}
-                    className="flex items-center gap-1 text-sm font-medium flex-1 text-left"
+                    className="flex items-center gap-1 text-sm font-medium flex-1 text-left min-w-0"
                   >
                     {expanded === pipe.config.name ? (
-                      <ChevronDown className="h-4 w-4" />
+                      <ChevronDown className="h-4 w-4 shrink-0" />
                     ) : (
-                      <ChevronRight className="h-4 w-4" />
+                      <ChevronRight className="h-4 w-4 shrink-0" />
                     )}
-                    {pipe.config.name}
+                    <span className="truncate">{pipe.config.name}</span>
                   </button>
 
-                  <Badge variant="outline" className="text-xs">
+                  <Badge variant="outline" className="text-xs shrink-0">
                     {pipe.config.schedule}
                   </Badge>
 
@@ -778,46 +810,28 @@ export function PipesSection() {
                   {isRunning ? (
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="icon"
+                      className="h-7 w-7"
                       onClick={() => stopPipe(pipe.config.name)}
                       disabled={stoppingPipe === pipe.config.name}
                       title="stop pipe"
                     >
                       {stoppingPipe === pipe.config.name ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Square className="h-4 w-4" />
+                        <Square className="h-3.5 w-3.5" />
                       )}
                     </Button>
                   ) : (
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="icon"
+                      className="h-7 w-7"
                       onClick={() => runPipe(pipe.config.name)}
                       disabled={runningPipe === pipe.config.name}
                       title="run pipe"
                     >
-                      <Play className="h-4 w-4" />
-                    </Button>
-                  )}
-
-                  {isTeamAdmin && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs cursor-pointer gap-1"
-                      disabled={sharingPipe === pipe.config.name}
-                      onClick={() => sharePipeToTeam(pipe)}
-                      title={sharedPipeNames.has(pipe.config.name) ? "update team copy" : "share to team"}
-                    >
-                      {sharingPipe === pipe.config.name ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : sharedPipeNames.has(pipe.config.name) ? (
-                        <Check className="h-3 w-3" />
-                      ) : (
-                        <Users className="h-3 w-3" />
-                      )}
-                      {sharedPipeNames.has(pipe.config.name) ? "shared" : "share"}
+                      <Play className="h-3.5 w-3.5" />
                     </Button>
                   )}
 
@@ -827,6 +841,40 @@ export function PipesSection() {
                       togglePipe(pipe.config.name, checked)
                     }
                   />
+
+                  {/* Overflow menu */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {isTeamAdmin && (
+                        <>
+                          <DropdownMenuItem
+                            disabled={sharingPipe === pipe.config.name}
+                            onClick={() => sharePipeToTeam(pipe)}
+                          >
+                            {sharedPipeNames.has(pipe.config.name) ? (
+                              <Check className="h-3.5 w-3.5 mr-2" />
+                            ) : (
+                              <Users className="h-3.5 w-3.5 mr-2" />
+                            )}
+                            {sharedPipeNames.has(pipe.config.name) ? "update team copy" : "share to team"}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      )}
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => deletePipe(pipe.config.name)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-2" />
+                        delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {/* Live running indicator */}
@@ -858,89 +906,75 @@ export function PipesSection() {
                   );
                 })()}
 
-                {/* Compact recent runs — always visible */}
-                {recentExecs.length > 0 && (
-                  <div className="mt-2">
-                    <table className="w-full text-[11px] font-mono">
-                      <tbody>
-                        {recentExecs.slice(0, 3).map((exec) => (
-                          <tr key={exec.id} className="border-b last:border-b-0 border-muted/40">
-                            <td className="py-0.5 pr-2 text-muted-foreground whitespace-nowrap">
-                              {exec.started_at
-                                ? new Date(exec.started_at).toLocaleString([], {
-                                    month: "short",
-                                    day: "numeric",
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  })
-                                : "queued"}
-                            </td>
-                            <td className="py-0.5 pr-2 whitespace-nowrap">
-                              {exec.status === "completed" ? (
-                                <span className="text-green-600 dark:text-green-400">ok</span>
-                              ) : exec.status === "running" ? (
-                                <span className="flex items-center gap-1 text-muted-foreground">
-                                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                                  running
-                                </span>
-                              ) : exec.status === "failed" ? (
-                                <span className="text-red-600 dark:text-red-400">failed</span>
-                              ) : exec.status === "timed_out" ? (
-                                <span className="text-orange-600 dark:text-orange-400">timeout</span>
-                              ) : exec.status === "cancelled" ? (
-                                <span className="text-muted-foreground">cancelled</span>
-                              ) : (
-                                <span className="text-muted-foreground">{exec.status}</span>
-                              )}
-                            </td>
-                            <td className="py-0.5 pr-2 text-muted-foreground whitespace-nowrap">
-                              {exec.status === "running" && exec.started_at ? (
-                                <span className="flex items-center gap-1">
-                                  <ElapsedTimer startedAt={exec.started_at} />
-                                  <button
-                                    className="text-[10px] text-primary underline hover:no-underline ml-1"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      // Store in sessionStorage so the chat can pick it up on mount
-                                      // (the chat component may not be mounted yet)
-                                      sessionStorage.setItem(
-                                        "watchPipe",
-                                        JSON.stringify({
-                                          pipeName: pipe.config.name,
-                                          executionId: exec.id,
-                                        })
-                                      );
-                                      emit("watch_pipe", {
-                                        pipeName: pipe.config.name,
-                                        executionId: exec.id,
-                                      });
-                                    }}
-                                    title="watch live output"
-                                  >
-                                    watch
-                                  </button>
-                                </span>
-                              ) : exec.duration_ms != null ? (
-                                formatDuration(exec.duration_ms)
-                              ) : null}
-                            </td>
-                            <td className="py-0.5 text-muted-foreground truncate max-w-[200px]">
-                              {exec.error_type ? (
-                                <span className="text-red-600/70 dark:text-red-400/70">
-                                  {exec.error_type.replace("_", " ")}
-                                </span>
-                              ) : exec.status === "completed" && exec.stdout ? (
-                                <span className="truncate block">
-                                  {cleanPipeStdout(exec.stdout).split("\n")[0].slice(0, 60) || "completed"}
-                                </span>
-                              ) : null}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                {/* Last run — single line summary */}
+                {recentExecs.length > 0 && (() => {
+                  const exec = recentExecs[0];
+                  return (
+                  <div className="mt-1.5 flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+                    <span>
+                      {exec.started_at ? relativeTime(exec.started_at) : "queued"}
+                    </span>
+                    <span className="text-muted-foreground/50">·</span>
+                    {exec.status === "completed" ? (
+                      <span className="text-green-600 dark:text-green-400">ok</span>
+                    ) : exec.status === "running" ? (
+                      <span className="flex items-center gap-1">
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                        running
+                        {exec.started_at && <ElapsedTimer startedAt={exec.started_at} />}
+                        <button
+                          className="text-[10px] text-primary underline hover:no-underline ml-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            sessionStorage.setItem(
+                              "watchPipe",
+                              JSON.stringify({
+                                pipeName: pipe.config.name,
+                                executionId: exec.id,
+                              })
+                            );
+                            emit("watch_pipe", {
+                              pipeName: pipe.config.name,
+                              executionId: exec.id,
+                            });
+                          }}
+                          title="watch live output"
+                        >
+                          watch
+                        </button>
+                      </span>
+                    ) : exec.status === "failed" ? (
+                      <span className="text-red-600 dark:text-red-400">failed</span>
+                    ) : exec.status === "timed_out" ? (
+                      <span className="text-orange-600 dark:text-orange-400">timeout</span>
+                    ) : (
+                      <span>{exec.status}</span>
+                    )}
+                    {exec.duration_ms != null && exec.status !== "running" && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <span>{formatDuration(exec.duration_ms)}</span>
+                      </>
+                    )}
+                    {exec.error_type && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-red-600/70 dark:text-red-400/70">
+                          {exec.error_type.replace("_", " ")}
+                        </span>
+                      </>
+                    )}
+                    {exec.status === "completed" && exec.stdout && !exec.error_type && (
+                      <>
+                        <span className="text-muted-foreground/50">·</span>
+                        <span className="truncate max-w-[200px]">
+                          {cleanPipeStdout(exec.stdout).split("\n")[0].slice(0, 50) || "done"}
+                        </span>
+                      </>
+                    )}
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Expanded detail */}
                 {expanded === pipe.config.name && (
@@ -1112,16 +1146,6 @@ export function PipesSection() {
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => deletePipe(pipe.config.name)}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        delete
-                      </Button>
-                    </div>
                   </div>
                 )}
               </CardContent>
@@ -1130,6 +1154,32 @@ export function PipesSection() {
           })}
         </div>
       )}
+
+      {/* Create new pipe — at bottom */}
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const form = e.currentTarget;
+          const input = form.querySelector("input") as HTMLInputElement;
+          const value = input?.value?.trim();
+          if (!value) return;
+          input.value = "";
+
+          await showChatWithPrefill({
+            context: PIPE_CREATION_PROMPT,
+            prompt: value,
+            autoSend: true,
+          });
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Plus className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Input
+            placeholder="describe a pipe to create..."
+            className="font-mono text-sm"
+          />
+        </div>
+      </form>
 
       <UpgradeDialog
         open={showUpgrade}

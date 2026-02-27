@@ -19,7 +19,7 @@ Use `#` for Python, `//` for Rust/TS/JS/Swift. Keep it as the first comment in t
 - `apps/screenpipe-app-tauri/` - Desktop app (Tauri + Next.js)
 - `crates/screenpipe-server/` - Core backend (Rust)
 - `crates/screenpipe-audio/` - Audio capture/transcription (Rust)
-- `crates/screenpipe-vision/` - Screen capture/OCR (Rust)
+- `crates/screenpipe-vision/` - Screen capture/accessibility text (OCR fallback) (Rust)
 
 ## Analytics
 - PostHog API key: source from `.env.local` (gitignored)

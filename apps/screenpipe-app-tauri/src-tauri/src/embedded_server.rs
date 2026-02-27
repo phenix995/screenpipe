@@ -55,6 +55,9 @@ pub async fn start_embedded_server(
     if !config.analytics_id.is_empty() {
         std::env::set_var("SCREENPIPE_ANALYTICS_ID", &config.analytics_id);
     }
+
+    // Initialize server-side analytics (PostHog) so events like search_performed fire
+    analytics::init(config.analytics_enabled);
     
     // Chinese HuggingFace mirror
     if config.use_chinese_mirror {

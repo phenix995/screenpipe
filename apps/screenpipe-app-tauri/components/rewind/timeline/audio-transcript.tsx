@@ -6,8 +6,7 @@ import { AudioData, StreamTimeSeriesResponse, TimeRange } from "@/components/rew
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Play, Pause, Volume2, GripHorizontal, X, MessageSquare, Layers, Users, Copy, Check, BotMessageSquare, Sparkles } from "lucide-react";
-import { commands } from "@/lib/utils/tauri";
-import { emit } from "@tauri-apps/api/event";
+import { showChatWithPrefill } from "@/lib/chat-utils";
 import { VideoComponent } from "@/components/rewind/video";
 import { SpeakerAssignPopover } from "@/components/speaker-assign-popover";
 import {
@@ -462,9 +461,7 @@ export function AudioTranscript({
 
 		const context = `here is my ${label}:\n\n${lines.join("\n")}`;
 
-		await commands.showWindow("Chat");
-		await new Promise((r) => setTimeout(r, 200));
-		await emit("chat-prefill", { context, prompt: "" });
+		await showChatWithPrefill({ context, prompt: "" });
 	}, [tabMode, meetingConversationData, conversationData, getSpeakerInfo]);
 
 	// Summarize: works for meeting (preferred) or nearby audio (fallback)
@@ -543,9 +540,7 @@ export function AudioTranscript({
 			: "summarize this meeting with key takeaways and action items";
 		const prompt = meetingPipe?.prompt || fallbackPrompt;
 
-		await commands.showWindow("Chat");
-		await new Promise((r) => setTimeout(r, 200));
-		await emit("chat-prefill", { context, prompt, autoSend: true });
+		await showChatWithPrefill({ context, prompt, autoSend: true });
 	}, [summarizeInfo, getSpeakerInfo, templatePipes]);
 
 	// Auto-switch to thread view if multiple speakers detected

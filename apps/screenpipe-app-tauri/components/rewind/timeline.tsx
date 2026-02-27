@@ -5,10 +5,11 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 
-import { Loader2, RotateCcw, AlertCircle, X, Sparkles } from "lucide-react";
+import { Loader2, RotateCcw, AlertCircle, X, Sparkles, Globe, Lock, ExternalLink } from "lucide-react";
 import { SearchModal } from "@/components/rewind/search-modal";
 import { commands } from "@/lib/utils/tauri";
 import { listen, emit } from "@tauri-apps/api/event";
+import { showChatWithPrefill } from "@/lib/chat-utils";
 import { invoke } from "@tauri-apps/api/core";
 import { AudioTranscript } from "@/components/rewind/timeline/audio-transcript";
 import { SubtitleBar } from "@/components/rewind/timeline/subtitle-bar";
@@ -229,35 +230,8 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		return frame.devices.some((d) => d.device_id === selectedDeviceId);
 	}, [selectedDeviceId, allDeviceIds.length]);
 
-	// Find next frame index matching the device filter in a given direction
-	const findNextDevice = useCallback((fromIndex: number, dir: 1 | -1): number => {
-		if (selectedDeviceId === "all" || allDeviceIds.length <= 1) {
-			return Math.max(0, Math.min(fromIndex + dir, frames.length - 1));
-		}
-		let i = fromIndex + dir;
-		while (i >= 0 && i < frames.length) {
-			if (frames[i]?.devices.some((d) => d.device_id === selectedDeviceId)) return i;
-			i += dir;
-		}
-		return fromIndex; // no match, stay put
-	}, [selectedDeviceId, allDeviceIds.length, frames]);
-
-	// Snap an arbitrary index to the nearest matching frame
-	const snapToDevice = useCallback((idx: number): number => {
-		if (selectedDeviceId === "all" || allDeviceIds.length <= 1) return idx;
-		const clamped = Math.max(0, Math.min(idx, frames.length - 1));
-		if (frames[clamped]?.devices.some((d) => d.device_id === selectedDeviceId)) return clamped;
-		for (let offset = 1; offset < frames.length; offset++) {
-			const lo = clamped - offset;
-			const hi = clamped + offset;
-			if (lo >= 0 && frames[lo]?.devices.some((d) => d.device_id === selectedDeviceId)) return lo;
-			if (hi < frames.length && frames[hi]?.devices.some((d) => d.device_id === selectedDeviceId)) return hi;
-		}
-		return clamped;
-	}, [selectedDeviceId, allDeviceIds.length, frames]);
-
-	// Pre-computed sorted list of frame indices matching BOTH device and app filters.
-	// Used by scroll handler to navigate in "matching frame space".
+	// Pre-computed sorted list of frame indices matching all active filters.
+	// Used by scroll handler and arrow keys to navigate in "matching frame space".
 	const matchingIndices = useMemo(() => {
 		const filterDevice = selectedDeviceId !== "all" && allDeviceIds.length > 1;
 		const filterApp = selectedAppName !== "all";
@@ -286,6 +260,47 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		}
 		return indices.length > 0 ? indices : null;
 	}, [frames, selectedDeviceId, allDeviceIds.length, selectedAppName, selectedDomain, selectedSpeaker, selectedTag, tags]);
+
+	// Find next frame index matching active filters in a given direction
+	const findNextDevice = useCallback((fromIndex: number, dir: 1 | -1): number => {
+		// When any filter is active, navigate only through matching frames
+		if (matchingIndices) {
+			let pos = -1;
+			let bestDist = Infinity;
+			for (let j = 0; j < matchingIndices.length; j++) {
+				const dist = Math.abs(matchingIndices[j] - fromIndex);
+				if (dist < bestDist) { bestDist = dist; pos = j; }
+			}
+			const nextPos = pos + (dir === 1 ? 1 : -1);
+			if (nextPos >= 0 && nextPos < matchingIndices.length) {
+				return matchingIndices[nextPos];
+			}
+			return fromIndex;
+		}
+		if (selectedDeviceId === "all" || allDeviceIds.length <= 1) {
+			return Math.max(0, Math.min(fromIndex + dir, frames.length - 1));
+		}
+		let i = fromIndex + dir;
+		while (i >= 0 && i < frames.length) {
+			if (frames[i]?.devices.some((d) => d.device_id === selectedDeviceId)) return i;
+			i += dir;
+		}
+		return fromIndex; // no match, stay put
+	}, [selectedDeviceId, allDeviceIds.length, frames, matchingIndices]);
+
+	// Snap an arbitrary index to the nearest matching frame
+	const snapToDevice = useCallback((idx: number): number => {
+		if (selectedDeviceId === "all" || allDeviceIds.length <= 1) return idx;
+		const clamped = Math.max(0, Math.min(idx, frames.length - 1));
+		if (frames[clamped]?.devices.some((d) => d.device_id === selectedDeviceId)) return clamped;
+		for (let offset = 1; offset < frames.length; offset++) {
+			const lo = clamped - offset;
+			const hi = clamped + offset;
+			if (lo >= 0 && frames[lo]?.devices.some((d) => d.device_id === selectedDeviceId)) return lo;
+			if (hi < frames.length && frames[hi]?.devices.some((d) => d.device_id === selectedDeviceId)) return hi;
+		}
+		return clamped;
+	}, [selectedDeviceId, allDeviceIds.length, frames]);
 
 	// When monitor filter changes, snap to nearest matching frame
 	const handleDeviceChange = useCallback((deviceId: string) => {
@@ -373,6 +388,10 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		togglePlayPause,
 		cycleSpeed,
 		pause: pausePlayback,
+		activeDevices,
+		mutedDevices,
+		toggleDeviceMute,
+		seekTo: seekPlayback,
 	} = useAudioPlayback({
 		frames,
 		currentIndex,
@@ -853,23 +872,12 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
 		const context = contextParts.join("\n\n");
 
-		// Open chat window first, then emit context
-		await commands.showWindow("Chat");
-		setTimeout(() => {
-			if (pipe) {
-				emit("chat-prefill", {
-					context,
-					prompt: pipe.prompt,
-					autoSend: true,
-				});
-			} else {
-				emit("chat-prefill", {
-					context,
-					prompt: `Based on my activity from ${startTime} to ${endTime}, `,
-					source: "timeline",
-				});
-			}
-		}, 200);
+		// Open chat window and deliver prefill reliably (handles fresh webview creation)
+		if (pipe) {
+			await showChatWithPrefill({ context, prompt: pipe.prompt, autoSend: true });
+		} else {
+			await showChatWithPrefill({ context, prompt: `Based on my activity from ${startTime} to ${endTime}, `, source: "timeline" });
+		}
 
 		posthog.capture("timeline_selection_to_chat", {
 			selection_duration_ms: selectionRange.end.getTime() - selectionRange.start.getTime(),
@@ -1001,7 +1009,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
 			if (e.key === "ArrowLeft") {
 				e.preventDefault();
-				pausePlayback();
+				if (!isPlaying) pausePlayback();
 				if (isAlt) {
 					// Alt+ArrowLeft = prev app boundary
 					setCurrentIndex((prev) => {
@@ -1009,7 +1017,10 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 						let i = prev + 1;
 						while (i < frames.length) {
 							if (getFrameAppName(frames[i]) !== currentApp) {
-								if (frames[i]) setCurrentFrame(frames[i]);
+								if (frames[i]) {
+									setCurrentFrame(frames[i]);
+									if (isPlaying) seekPlayback(new Date(frames[i].timestamp).getTime());
+								}
 								return i;
 							}
 							i++;
@@ -1020,13 +1031,16 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 					// ArrowLeft = prev frame (older = higher index)
 					setCurrentIndex((prev) => {
 						const next = findNextDevice(prev, 1);
-						if (frames[next]) setCurrentFrame(frames[next]);
+						if (frames[next]) {
+							setCurrentFrame(frames[next]);
+							if (isPlaying) seekPlayback(new Date(frames[next].timestamp).getTime());
+						}
 						return next;
 					});
 				}
 			} else if (e.key === "ArrowRight") {
 				e.preventDefault();
-				pausePlayback();
+				if (!isPlaying) pausePlayback();
 				if (isAlt) {
 					// Alt+ArrowRight = next app boundary
 					setCurrentIndex((prev) => {
@@ -1034,7 +1048,10 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 						let i = prev - 1;
 						while (i >= 0) {
 							if (getFrameAppName(frames[i]) !== currentApp) {
-								if (frames[i]) setCurrentFrame(frames[i]);
+								if (frames[i]) {
+									setCurrentFrame(frames[i]);
+									if (isPlaying) seekPlayback(new Date(frames[i].timestamp).getTime());
+								}
 								return i;
 							}
 							i--;
@@ -1045,7 +1062,10 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 					// ArrowRight = next frame (newer = lower index)
 					setCurrentIndex((prev) => {
 						const next = findNextDevice(prev, -1);
-						if (frames[next]) setCurrentFrame(frames[next]);
+						if (frames[next]) {
+							setCurrentFrame(frames[next]);
+							if (isPlaying) seekPlayback(new Date(frames[next].timestamp).getTime());
+						}
 						return next;
 					});
 				}
@@ -1054,7 +1074,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
 		window.addEventListener("keydown", handleArrowKeys);
 		return () => window.removeEventListener("keydown", handleArrowKeys);
-	}, [frames, setCurrentFrame, showSearchModal]);
+	}, [frames, setCurrentFrame, showSearchModal, isPlaying, seekPlayback, pausePlayback]);
 
 	useEffect(() => {
 		const getStartDateAndSet = async () => {
@@ -1265,9 +1285,9 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		return () => target.removeEventListener("wheel", handler);
 	}, [handleScroll, embedded]);
 
-	// Native trackpad pinch-to-zoom via Tauri event.
+	// Native trackpad pinch-to-zoom via Tauri event (macOS).
 	// WKWebView swallows magnifyWithEvent: — no JS gesture/wheel events fire.
-	// The Rust side uses an NSEvent local monitor to catch magnify gestures
+	// The Rust side attaches an NSMagnificationGestureRecognizer to the panel
 	// and emits "native-magnify" with the magnification delta.
 	useEffect(() => {
 		const unlisten = listen<number>("native-magnify", (event) => {
@@ -1277,33 +1297,12 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 			zoomTimeoutRef.current = setTimeout(() => {
 				isZoomingRef.current = false;
 			}, 150);
-			// Amplify: NSEvent magnification is small (~0.01-0.05 per tick)
 			setTargetZoom((prev) =>
 				Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev * (1 + magnification * 5))),
 			);
 		});
 		return () => { unlisten.then((f) => f()); };
 	}, [setTargetZoom]);
-
-	// Ensure WKWebView is first responder so pinch-to-zoom works.
-	// On macOS, magnifyWithEvent: only reaches the WKWebView if it's first responder.
-	// Various panel operations can steal this, so we re-assert on pointer enter
-	// and window focus events.
-	useEffect(() => {
-		const ensureFocus = () => {
-			commands.ensureWebviewFocus();
-		};
-		// Re-assert on any pointer entry into the page
-		document.addEventListener("pointerenter", ensureFocus, true);
-		// Re-assert when the window regains focus
-		const unlistenFocus = listen("window-focused", ensureFocus);
-		// Also assert on mount
-		ensureFocus();
-		return () => {
-			document.removeEventListener("pointerenter", ensureFocus, true);
-			unlistenFocus.then((f) => f());
-		};
-	}, []);
 
 	const handleRefresh = useCallback(() => {
 		// Full page reload - simpler and more reliable than WebSocket reconnection
@@ -1724,6 +1723,9 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 						onTogglePlayPause={togglePlayPause}
 						onCycleSpeed={cycleSpeed}
 						isNavigating={isNavigating}
+						activeDevices={activeDevices}
+						mutedDevices={mutedDevices}
+						onToggleDeviceMute={toggleDeviceMute}
 					/>
 					{/* Top right buttons */}
 					<div className={`absolute ${embedded ? "top-2" : "top-[calc(env(safe-area-inset-top)+16px)]"} right-4 flex items-center gap-2`}>
@@ -1742,6 +1744,39 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				<div className={`absolute ${embedded ? "top-12" : "top-[calc(env(safe-area-inset-top)+56px)]"} right-4 z-40`}>
 					<DailySummaryCard currentDate={currentDate} />
 				</div>
+
+				{/* Browser URL bar — at top of frame, above nav */}
+				{(() => {
+					const browserUrl = currentFrame?.devices?.[0]?.metadata?.browser_url;
+					if (!browserUrl) return null;
+					return (
+						<div className={`absolute ${embedded ? "top-1" : "top-[calc(env(safe-area-inset-top)+4px)]"} left-0 right-0 z-[45] flex justify-center pointer-events-none`}>
+							<button
+								type="button"
+								className="flex items-center gap-1.5 max-w-lg min-w-0 px-3 py-1 rounded-full bg-black/70 backdrop-blur-sm border border-white/10 hover:bg-black/80 hover:border-white/20 transition-colors cursor-pointer pointer-events-auto"
+								title={`Open ${browserUrl}`}
+								onClick={async () => {
+									try {
+										const { open } = await import("@tauri-apps/plugin-shell");
+										await open(browserUrl);
+									} catch {
+										window.open(browserUrl, "_blank");
+									}
+								}}
+							>
+								{browserUrl.startsWith("https") ? (
+									<Lock className="w-3 h-3 text-green-400/80 shrink-0" />
+								) : (
+									<Globe className="w-3 h-3 text-white/40 shrink-0" />
+								)}
+								<span className="text-[12px] font-mono text-white/80 truncate">
+									{browserUrl.replace(/^https?:\/\/(www\.)?/, "")}
+								</span>
+								<ExternalLink className="w-3 h-3 text-white/40 shrink-0" />
+							</button>
+						</div>
+					);
+				})()}
 
 				{/* Subtitle bar — below nav bar, always visible when audio exists nearby */}
 				<div className={`absolute ${embedded ? "top-16" : "top-[calc(env(safe-area-inset-top)+96px)]"} left-4 right-4 z-[35]`}>

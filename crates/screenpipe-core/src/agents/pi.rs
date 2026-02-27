@@ -771,17 +771,32 @@ pub fn find_pi_executable() -> Option<String> {
 /// Pi's shebang is `#!/usr/bin/env node`, but screenpipe only bundles bun
 /// (not node). On Unix we run `bun <pi_path>` so the script executes under
 /// bun's Node-compatible runtime regardless of whether node is installed.
-/// On Windows, .cmd files need `cmd.exe /C`.
+/// On Windows, .cmd files need `cmd.exe /C` and bun injected into PATH
+/// because the .cmd shim created by `bun add -g` needs to find bun.exe.
 fn build_async_command(path: &str) -> tokio::process::Command {
     #[cfg(windows)]
     {
-        if path.ends_with(".cmd") || path.ends_with(".bat") {
-            let mut cmd = tokio::process::Command::new("cmd.exe");
-            cmd.args(["/C", path]);
-            cmd
+        let mut cmd = if path.ends_with(".cmd") || path.ends_with(".bat") {
+            let mut c = tokio::process::Command::new("cmd.exe");
+            c.args(["/C", path]);
+            c
         } else {
             tokio::process::Command::new(path)
+        };
+
+        // Inject bundled bun directory into PATH so the .cmd shim can find bun.exe.
+        // Without this, fresh Windows installs where bun is only bundled (not in
+        // system PATH) fail with "bun is not installed in %PATH%".
+        if let Some(bun_path) = find_bun_executable() {
+            if let Some(bun_dir) = std::path::Path::new(&bun_path).parent() {
+                let current_path = std::env::var("PATH").unwrap_or_default();
+                let new_path = format!("{};{}", bun_dir.display(), current_path);
+                cmd.env("PATH", new_path);
+                debug!("injected bun dir into PATH for pi: {}", bun_dir.display());
+            }
         }
+
+        cmd
     }
     #[cfg(not(windows))]
     {

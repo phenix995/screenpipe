@@ -592,13 +592,20 @@ fn run_tree_walker(
 
                     metrics.total_text_chars += snap.text_content.len() as u64;
 
-                    match rt_handle.block_on(db.insert_accessibility_text(
-                        &snap.app_name,
-                        &snap.window_name,
-                        &snap.text_content,
-                        snap.browser_url.as_deref(),
-                    )) {
-                        Ok(_id) => {
+                    // Wrap block_on in catch_unwind — during shutdown the tokio
+                    // runtime may be tearing down, causing block_on to panic.
+                    // Losing one DB write on shutdown is harmless.
+                    let db_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        rt_handle.block_on(db.insert_accessibility_text(
+                            &snap.app_name,
+                            &snap.window_name,
+                            &snap.text_content,
+                            snap.browser_url.as_deref(),
+                        ))
+                    }));
+
+                    match db_result {
+                        Ok(Ok(_id)) => {
                             debug!(
                                 "Stored accessibility text: app={}, window={}, len={}, nodes={}, walk={}ms",
                                 snap.app_name,
@@ -610,9 +617,13 @@ fn run_tree_walker(
                             cache.record_store(&snap.app_name, &snap.window_name, snap.simhash);
                             metrics.walks_stored += 1;
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             debug!("Failed to insert accessibility text: {}", e);
                             metrics.walks_error += 1;
+                        }
+                        Err(_) => {
+                            debug!("Runtime shutting down, stopping tree-walker DB writes");
+                            break;
                         }
                     }
                 } else {

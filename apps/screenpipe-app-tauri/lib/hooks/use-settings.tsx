@@ -399,6 +399,31 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
+		// Migration: Auto-detect hardware and adjust engine for weak machines (one-time only)
+		if (!(settings as any)._hardwareCapabilityMigrationDone) {
+			try {
+				const { commands: tauriCommands } = await import("../utils/tauri");
+				const hw = await tauriCommands.getHardwareCapability();
+				if (hw.isWeakForLargeModel) {
+					const currentEngine = settings.audioTranscriptionEngine;
+					if (settings.user?.cloud_subscribed) {
+						// Pro subscribers: prefer cloud on weak hardware
+						settings.audioTranscriptionEngine = "screenpipe-cloud";
+						needsUpdate = true;
+					} else if (currentEngine.includes("large")) {
+						// Non-pro on weak hardware with a large model: downgrade
+						settings.audioTranscriptionEngine = hw.recommendedEngine;
+						needsUpdate = true;
+					}
+				}
+				// Only mark done on success — if backend wasn't ready, retry next load
+				(settings as any)._hardwareCapabilityMigrationDone = true;
+				needsUpdate = true;
+			} catch {
+				// Backend not ready (e.g. during SSR) — skip, will retry next settings load
+			}
+		}
+
 		// Save migrations if needed
 		if (needsUpdate) {
 			await store.set("settings", settings);

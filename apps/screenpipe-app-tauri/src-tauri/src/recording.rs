@@ -218,15 +218,22 @@ pub async fn spawn_screenpipe(
     // shutting down after handle.shutdown() or stop_screenpipe()).
     // The embedded server will fail to bind if the port is still occupied,
     // so this is critical for restart reliability.
-    for i in 0..20 {
+    // On Windows, socket cleanup after taskkill can take >7s; use 40 iterations
+    // (10s) instead of 20 (5s) to avoid error 10048 (WSAEADDRINUSE).
+    let max_poll_iters = if cfg!(windows) { 40 } else { 20 };
+    for i in 0..max_poll_iters {
         match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await {
             Ok(_) => {
                 debug!("Port {} is free after {}ms", port, i * 250);
                 break;
             }
             Err(_) => {
-                if i == 19 {
-                    warn!("Port {} still in use after 5s, will attempt start anyway", port);
+                if i == max_poll_iters - 1 {
+                    warn!(
+                        "Port {} still in use after {}s, will attempt start anyway",
+                        port,
+                        max_poll_iters * 250 / 1000
+                    );
                 } else {
                     tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
                 }
@@ -464,7 +471,8 @@ async fn kill_process_on_port(port: u16) {
                     }
                     let _ = kill_cmd.output().await;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                // Windows needs extra time for socket cleanup after taskkill
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                 info!("Killed orphaned process(es) on port {}", port);
             }
             _ => {}

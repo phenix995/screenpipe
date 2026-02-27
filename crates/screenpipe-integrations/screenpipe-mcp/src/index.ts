@@ -64,7 +64,7 @@ const BASE_TOOLS: Tool[] = [
   {
     name: "search-content",
     description:
-      "Search screenpipe's recorded content: screen text (OCR), audio transcriptions, and UI elements. " +
+      "Search screenpipe's recorded content: screen text (accessibility APIs, with OCR fallback), audio transcriptions, and UI elements. " +
       "Returns timestamped results with app context. " +
       "Call with no parameters to get recent activity. " +
       "Use the 'screenpipe://context' resource for current time when building time-based queries.\n\n" +
@@ -86,7 +86,7 @@ const BASE_TOOLS: Tool[] = [
         content_type: {
           type: "string",
           enum: ["all", "ocr", "audio", "input", "accessibility"],
-          description: "Content type filter: 'ocr' (screen text), 'audio' (transcriptions), 'input' (clicks, keystrokes, clipboard, app switches), 'accessibility' (accessibility tree text), 'all'. Default: 'all'.",
+          description: "Content type filter: 'ocr' (screen text via OCR, legacy fallback), 'audio' (transcriptions), 'input' (clicks, keystrokes, clipboard, app switches), 'accessibility' (accessibility tree text, preferred for screen content), 'all'. Default: 'all'.",
           default: "all",
         },
         limit: {
@@ -291,16 +291,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 ## Data Modalities
 
 Screenpipe captures four types of data:
-1. **OCR** - Screen text from screenshots
-2. **Audio** - Transcribed speech from microphone/system audio
-3. **Input** - Keyboard input, mouse clicks, app switches, clipboard (macOS)
-4. **Accessibility** - Accessibility tree text
+1. **Accessibility** - Screen text via accessibility APIs (primary, preferred for screen content)
+2. **OCR** - Screen text from screenshots (legacy fallback for apps without accessibility support)
+3. **Audio** - Transcribed speech from microphone/system audio
+4. **Input** - Keyboard input, mouse clicks, app switches, clipboard (macOS)
 
 ## Quick Start
 - **Get recent activity**: Call search-content with no parameters
-- **Search text**: \`{"q": "search term", "content_type": "ocr"}\`
+- **Search screen text**: \`{"q": "search term", "content_type": "all"}\`
 - **Get keyboard input**: \`{"content_type": "input"}\`
-- **Get accessibility text**: \`{"content_type": "accessibility"}\`
+- **Get audio only**: \`{"content_type": "audio"}\`
 
 ## search-content
 | Parameter | Description | Default |
@@ -471,7 +471,7 @@ Current time: ${dateInfo.isoDate}
 Use search-content with:
 - app_name: "${app}"
 ${query ? `- q: "${query}"` : "- No query filter"}
-- content_type: "ocr"
+- content_type: "all"
 - limit: 50`,
             },
           },

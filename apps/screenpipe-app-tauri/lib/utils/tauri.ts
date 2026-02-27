@@ -167,9 +167,11 @@ async showWindow(window: ShowRewindWindow) : Promise<Result<null, string>> {
 }
 },
 /**
- * Open the screenpi.pe login page inside an in-app WebView.
- * Intercepts the screenpipe:// deep-link redirect so we don't rely on
- * Safari custom-scheme support (which can silently fail).
+ * Open the screenpi.pe login page.
+ * On Windows, opens in the system browser (WebView2 has issues with some auth
+ * providers; the registered deep-link scheme handles the redirect back).
+ * On macOS/Linux, uses an in-app WebView that intercepts the screenpipe://
+ * deep-link redirect (Safari blocks custom-scheme redirects).
  */
 async openLoginWindow() : Promise<Result<null, string>> {
     try {
@@ -775,6 +777,9 @@ async validateDataDir(path: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getHardwareCapability() : Promise<HardwareCapability> {
+    return await TAURI_INVOKE("get_hardware_capability");
 }
 }
 
@@ -812,6 +817,7 @@ endDisplay: string; attendees: string[]; location: string | null; calendarName: 
 export type CalendarStatus = { available: boolean; authorized: boolean; authorizationStatus: string; calendarCount: number }
 export type Credits = { amount: number }
 export type EmbeddedLLM = { enabled: boolean; model: string; port: number }
+export type HardwareCapability = { hasGpu: boolean; cpuCores: bigint; totalMemoryGb: number; isWeakForLargeModel: boolean; recommendedEngine: string; reason: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
 export type LogFile = { name: string; path: string; modified_at: bigint }
 export type MonitorDevice = { id: number; stableId: string; name: string; isDefault: boolean; width: number; height: number }

@@ -230,6 +230,8 @@ pub async fn sync_init(
         tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
 
         let interval = tokio::time::Duration::from_secs(request.sync_interval_secs.unwrap_or(300));
+        let max_backoff = tokio::time::Duration::from_secs(30 * 60); // 30 minutes
+        let mut consecutive_failures: u32 = 0;
 
         loop {
             let end = chrono::Utc::now();
@@ -301,19 +303,38 @@ pub async fn sync_init(
 
                     // Advance cursor
                     *download_cursor.write().await = Some(end.to_rfc3339());
+                    consecutive_failures = 0;
                 }
                 Ok(_) => {
                     info!("sync download: no new blobs from other devices");
                     // Still advance cursor so we don't re-check the same window
                     *download_cursor.write().await = Some(end.to_rfc3339());
+                    consecutive_failures = 0;
                 }
                 Err(e) => {
-                    warn!("sync download: failed: {}", e);
+                    consecutive_failures += 1;
+                    warn!(
+                        "sync download: failed (attempt {}): {}",
+                        consecutive_failures, e
+                    );
                     // Don't advance cursor on failure — retry same window next time
                 }
             }
 
-            tokio::time::sleep(interval).await;
+            // Exponential backoff after 3+ consecutive failures (capped at 30 min)
+            let sleep_dur = if consecutive_failures >= 3 {
+                let exp = (consecutive_failures - 2).min(3); // 1,2,3 → 2x,4x,8x
+                let backoff = interval * 2u32.pow(exp);
+                let capped = backoff.min(max_backoff);
+                warn!(
+                    "sync download: {} consecutive failures, backing off to {:?}",
+                    consecutive_failures, capped
+                );
+                capped
+            } else {
+                interval
+            };
+            tokio::time::sleep(sleep_dur).await;
         }
     });
 

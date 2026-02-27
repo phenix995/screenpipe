@@ -12,13 +12,13 @@ import { SelectableTextLayer, getSelectableLayerText, clearSelectableLayerSelect
 import { RegionOcrOverlay } from "@/components/rewind/region-ocr-overlay";
 import { useSearchHighlight } from "@/lib/hooks/use-search-highlight";
 import { useSettings } from "@/lib/hooks/use-settings";
-import { ImageOff, ChevronLeft, ChevronRight, Copy, ImageIcon, Link2, MessageCircle, ExternalLink, Type, Lock, Globe, Zap } from "lucide-react";
+import { ImageOff, ChevronLeft, ChevronRight, Copy, ImageIcon, Link2, MessageCircle, ExternalLink, Type, Zap } from "lucide-react";
 import { usePipes, type TemplatePipe } from "@/lib/hooks/use-pipes";
 import posthog from "posthog-js";
 import { toast } from "@/components/ui/use-toast";
 import { commands } from "@/lib/utils/tauri";
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { showChatWithPrefill } from "@/lib/chat-utils";
 
 export interface DetectedUrl {
 	normalized: string;
@@ -153,7 +153,6 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 	const filePath = device?.metadata?.file_path;
 	const offsetIndex = device?.offset_index ?? 0;
 	const fpsFromServer = device?.fps ?? 0.5;
-	const browserUrl = device?.metadata?.browser_url;
 
 
 	// Track skipped frames for analytics
@@ -608,9 +607,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 		const rawText = frameContext?.text || textPositions.map((p) => p.text).join(" ");
 		const textSnippet = rawText.slice(0, 300);
 		const context = `Context from timeline frame:\n${device.metadata?.app_name || "?"} - ${device.metadata?.window_name || "?"}\nTime: ${currentFrame?.timestamp || "?"}\n\nText:\n${textSnippet}${textSnippet.length >= 300 ? "…" : ""}`;
-		await commands.showWindow("Chat");
-		await new Promise((r) => setTimeout(r, 150));
-		await emit("chat-prefill", { context, frameId: parseInt(debouncedFrame.frameId, 10) });
+		await showChatWithPrefill({ context, frameId: parseInt(debouncedFrame.frameId, 10) });
 		toast({ title: "ask about this frame", description: "chat opened with frame context" });
 	}, [debouncedFrame, device, frameContext?.text, textPositions, currentFrame]);
 
@@ -619,9 +616,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 		const rawText = frameContext?.text || textPositions.map((p) => p.text).join(" ");
 		const textSnippet = rawText.slice(0, 300);
 		const context = `Context from timeline frame:\n${device.metadata?.app_name || "?"} - ${device.metadata?.window_name || "?"}\nTime: ${currentFrame?.timestamp || "?"}\n\nText:\n${textSnippet}${textSnippet.length >= 300 ? "…" : ""}`;
-		await commands.showWindow("Chat");
-		await new Promise((r) => setTimeout(r, 150));
-		await emit("chat-prefill", { context, prompt: pipe.prompt, autoSend: true });
+		await showChatWithPrefill({ context, prompt: pipe.prompt, autoSend: true });
 		toast({ title: `${pipe.icon} ${pipe.title}`, description: "running pipe with frame context" });
 	}, [debouncedFrame, device, frameContext?.text, textPositions, currentFrame]);
 
@@ -937,40 +932,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 				/>
 			)}
 
-
-			{/* Browser address bar overlay — shows URL when viewing a web page */}
-			{!isLoading && !hasError && browserUrl && (
-				<div
-					className="absolute top-0 left-0 right-0 z-10 flex items-center gap-2 px-3 py-1.5 bg-black/70 backdrop-blur-sm border-b border-white/10"
-				>
-					<div className="flex items-center gap-1.5 text-white/40">
-						<Globe className="w-3.5 h-3.5" />
-					</div>
-					<div className="flex-1 flex items-center gap-1.5 min-w-0 px-2 py-0.5 rounded-sm bg-white/10">
-						{browserUrl.startsWith("https") && (
-							<Lock className="w-3 h-3 text-green-400/80 shrink-0" />
-						)}
-						<span className="text-[12px] font-mono text-white/80 truncate">
-							{browserUrl.replace(/^https?:\/\/(www\.)?/, "")}
-						</span>
-					</div>
-					<button
-						type="button"
-						className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-white/60 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-						title={`Open ${browserUrl}`}
-						onClick={async () => {
-							try {
-								const { open } = await import("@tauri-apps/plugin-shell");
-								await open(browserUrl);
-							} catch {
-								window.open(browserUrl, "_blank");
-							}
-						}}
-					>
-						<ExternalLink className="w-3.5 h-3.5" />
-					</button>
-				</div>
-			)}
+			{/* Browser URL bar moved to parent timeline.tsx at z-[45] so it's clickable above controls */}
 
 			{/* Search highlights + URL links (pointer-events: none wrapper, links have auto) */}
 			{!isLoading && !hasError && !ocrLoading && naturalDimensions && renderedImageInfo && textPositions.length > 0 && (

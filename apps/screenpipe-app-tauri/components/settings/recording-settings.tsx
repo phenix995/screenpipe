@@ -51,7 +51,7 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { commands, SettingsStore, MonitorDevice, AudioDeviceInfo } from "@/lib/utils/tauri";
+import { commands, SettingsStore, MonitorDevice, AudioDeviceInfo, HardwareCapability } from "@/lib/utils/tauri";
 
 import {
   useSettings,
@@ -222,6 +222,11 @@ export function RecordingSettings() {
   const [pushingFilter, setPushingFilter] = useState<string | null>(null);
   const [filterView, setFilterView] = useState<"all" | "personal" | "team">("all");
   const overlayData = useOverlayData();
+  const [hwCapability, setHwCapability] = useState<HardwareCapability | null>(null);
+
+  useEffect(() => {
+    commands.getHardwareCapability().then(setHwCapability).catch(() => {});
+  }, []);
 
   const handlePushFilterToTeam = async (configType: string, key: string, filters: string[]) => {
     setPushingFilter(key);
@@ -909,8 +914,8 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
           </CardContent>
         </Card>
 
-        {/* Your Name + Train Voice */}
-        {!settings.disableAudio && (
+        {/* Your Name + Train Voice — hidden when transcription is disabled */}
+        {!settings.disableAudio && settings.audioTranscriptionEngine !== "disabled" && (
         <Card className="border-border bg-card">
           <CardContent className="px-3 py-2.5">
             <div className="flex items-center justify-between">
@@ -986,19 +991,30 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="screenpipe-cloud" disabled={!settings.user?.cloud_subscribed}>
-                    Screenpipe Cloud {!settings.user?.cloud_subscribed && "(pro)"}
+                    Screenpipe Cloud {!settings.user?.cloud_subscribed && "(pro)"}{hwCapability?.recommendedEngine === "screenpipe-cloud" && " (recommended)"}
                   </SelectItem>
-                  <SelectItem value="whisper-tiny">Whisper Tiny</SelectItem>
-                  <SelectItem value="whisper-tiny-quantized">Whisper Tiny Quantized</SelectItem>
-                  <SelectItem value="whisper-large">Whisper Large V3</SelectItem>
-                  <SelectItem value="whisper-large-quantized">Whisper Large V3 Quantized</SelectItem>
-                  <SelectItem value="whisper-large-v3-turbo">Whisper Large V3 Turbo</SelectItem>
-                  <SelectItem value="whisper-large-v3-turbo-quantized">Whisper Large V3 Turbo Quantized</SelectItem>
+                  <SelectItem value="whisper-tiny">Whisper Tiny{hwCapability?.recommendedEngine === "whisper-tiny" && " (recommended)"}</SelectItem>
+                  <SelectItem value="whisper-tiny-quantized">Whisper Tiny Quantized{hwCapability?.recommendedEngine === "whisper-tiny-quantized" && " (recommended)"}</SelectItem>
+                  <SelectItem value="whisper-large">Whisper Large V3{hwCapability?.recommendedEngine === "whisper-large" && " (recommended)"}</SelectItem>
+                  <SelectItem value="whisper-large-quantized">Whisper Large V3 Quantized{hwCapability?.recommendedEngine === "whisper-large-quantized" && " (recommended)"}</SelectItem>
+                  <SelectItem value="whisper-large-v3-turbo">Whisper Large V3 Turbo{hwCapability?.recommendedEngine === "whisper-large-v3-turbo" && " (recommended)"}</SelectItem>
+                  <SelectItem value="whisper-large-v3-turbo-quantized">Whisper Large V3 Turbo Quantized{hwCapability?.recommendedEngine === "whisper-large-v3-turbo-quantized" && " (recommended)"}</SelectItem>
                   <SelectItem value="deepgram">Deepgram</SelectItem>
                   <SelectItem value="disabled">Disabled (capture only)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {hwCapability?.isWeakForLargeModel && settings.audioTranscriptionEngine.includes("large") && (
+              <div className="mt-2 ml-[26px] p-2 rounded-md bg-yellow-500/10 border border-yellow-500/30">
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  <AlertCircle className="h-3 w-3 inline mr-1" />
+                  {hwCapability.reason}
+                  {settings.user?.cloud_subscribed
+                    ? " Consider switching to Screenpipe Cloud for better performance."
+                    : ` Consider switching to ${hwCapability.recommendedEngine} to avoid high CPU usage.`}
+                </p>
+              </div>
+            )}
             {settings.audioTranscriptionEngine === "deepgram" && (
               <div className="mt-2 ml-[26px] relative">
                 <ValidatedInput
@@ -1021,10 +1037,11 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         </Card>
         )}
 
-        {/* Transcription Mode - only for local Whisper engines */}
+        {/* Transcription Mode - only for local Whisper engines, hidden when weak hardware + large model */}
         {!settings.disableAudio && settings.audioTranscriptionEngine !== "deepgram" &&
          settings.audioTranscriptionEngine !== "screenpipe-cloud" &&
-         settings.audioTranscriptionEngine !== "disabled" && (
+         settings.audioTranscriptionEngine !== "disabled" &&
+         !(hwCapability?.isWeakForLargeModel && settings.audioTranscriptionEngine.includes("large")) && (
           <Card className="border-border bg-card">
             <CardContent className="px-3 py-2.5">
               <div className="flex items-center justify-between">

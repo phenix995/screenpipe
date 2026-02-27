@@ -46,8 +46,9 @@ function formatCardBrand(brand: string): string {
   return brands[brand] ?? brand;
 }
 
-function getUsageLabel(ratio: number): string {
-  if (ratio >= 1) return "using paid overage";
+function getUsageLabel(ratio: number, unlimited: boolean): string {
+  if (unlimited) return "unlimited";
+  if (ratio >= 1) return "limit reached";
   if (ratio >= 0.8) return "heavy usage";
   if (ratio >= 0.5) return "moderate usage";
   return "low usage";
@@ -217,13 +218,14 @@ export function BillingSection() {
     );
   }
 
+  const isUnlimited = !usage?.limit_today || usage.limit_today <= 0;
   const usageRatio = usage
-    ? usage.limit_today > 0
-      ? usage.used_today / usage.limit_today
-      : 0
+    ? isUnlimited
+      ? 0
+      : usage.used_today / usage.limit_today
     : 0;
-  const progressValue = Math.min(usageRatio * 100, 100);
-  const usageLabel = getUsageLabel(usageRatio);
+  const progressValue = isUnlimited ? 0 : Math.min(usageRatio * 100, 100);
+  const usageLabel = getUsageLabel(usageRatio, isUnlimited);
   const tierLabel =
     usage?.tier === "pro" || settings.user?.cloud_subscribed ? "pro" : "free";
 
@@ -273,7 +275,7 @@ export function BillingSection() {
         </div>
       </Card>
 
-      {/* Daily usage progress */}
+      {/* Daily usage */}
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-foreground">
@@ -283,19 +285,33 @@ export function BillingSection() {
             {usageLabel}
           </span>
         </div>
-        <Progress value={progressValue} className="h-2.5 mb-2" />
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            {usageRatio >= 1
-              ? "daily free queries exhausted — using paid overage"
-              : "daily free AI queries"}
-          </p>
-          {usage?.resets_at && (
-            <p className="text-xs text-muted-foreground">
-              resets at {formatResetTime(usage.resets_at)}
+        {isUnlimited ? (
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-foreground">
+              {usage?.used_today ?? 0} queries used today
             </p>
-          )}
-        </div>
+            {usage?.resets_at && (
+              <p className="text-xs text-muted-foreground">
+                resets at {formatResetTime(usage.resets_at)}
+              </p>
+            )}
+          </div>
+        ) : (
+          <>
+            <Progress value={progressValue} className="h-2.5 mb-2" />
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                {usage?.used_today ?? 0} / {usage?.limit_today ?? 0} queries
+                {usageRatio >= 1 && " — limit reached, using paid credits"}
+              </p>
+              {usage?.resets_at && (
+                <p className="text-xs text-muted-foreground">
+                  resets at {formatResetTime(usage.resets_at)}
+                </p>
+              )}
+            </div>
+          </>
+        )}
       </Card>
 
       {/* Payment method */}
@@ -324,7 +340,7 @@ export function BillingSection() {
               auto-reload
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              automatically top up when overage balance is low
+              automatically top up when credit balance is low
             </p>
           </div>
           <Switch

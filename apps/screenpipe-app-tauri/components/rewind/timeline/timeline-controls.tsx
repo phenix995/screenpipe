@@ -5,7 +5,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, RefreshCw, CalendarIcon, Search, Play, Pause, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, CalendarIcon, Search, Play, Pause, Loader2, Mic, Volume2 } from "lucide-react";
 import {
 	format,
 	isAfter,
@@ -26,7 +26,7 @@ import {
 
 // Helper to format shortcut string for display
 function formatShortcutForDisplay(shortcut: string, isMac: boolean): string {
-	if (!shortcut) return isMac ? "⌘⌃K" : "Ctrl+Alt+K";
+	if (!shortcut) return "";
 
 	const parts = shortcut.split("+");
 	const modifiers: { symbol: string; order: number }[] = [];
@@ -105,6 +105,9 @@ interface TimelineControlsProps {
 	onTogglePlayPause?: () => void;
 	onCycleSpeed?: () => void;
 	isNavigating?: boolean;
+	activeDevices?: { name: string; isInput: boolean }[];
+	mutedDevices?: Set<string>;
+	onToggleDeviceMute?: (deviceName: string) => void;
 }
 
 export function TimelineControls({
@@ -122,18 +125,21 @@ export function TimelineControls({
 	onTogglePlayPause,
 	onCycleSpeed,
 	isNavigating,
+	activeDevices,
+	mutedDevices,
+	onToggleDeviceMute,
 }: TimelineControlsProps) {
 	const { isMac } = usePlatform();
 	const { settings } = useSettings();
 	const [calendarOpen, setCalendarOpen] = useState(false);
 
 	const searchShortcutDisplay = useMemo(
-		() => formatShortcutForDisplay(settings.searchShortcut ?? "Control+Super+K", isMac),
+		() => formatShortcutForDisplay(settings.searchShortcut || (isMac ? "Control+Super+K" : "Alt+K"), isMac),
 		[settings.searchShortcut, isMac]
 	);
 
 	const chatShortcutDisplay = useMemo(
-		() => formatShortcutForDisplay(settings.showChatShortcut ?? "Control+Super+L", isMac),
+		() => formatShortcutForDisplay(settings.showChatShortcut || (isMac ? "Control+Super+L" : "Alt+L"), isMac),
 		[settings.showChatShortcut, isMac]
 	);
 
@@ -277,6 +283,41 @@ export function TimelineControls({
 							>
 								{playbackSpeed ?? 1}x
 							</button>
+						)}
+						{/* Device mute dots — shown during playback when 2+ devices */}
+						{isPlaying && activeDevices && activeDevices.length >= 2 && onToggleDeviceMute && (
+							<>
+								<div className="w-px h-5 bg-border mx-0.5" />
+								<div className="flex items-center gap-1 px-1">
+									{activeDevices.map((device) => {
+										const isMuted = mutedDevices?.has(device.name) ?? false;
+										return (
+											<button
+												key={device.name}
+												type="button"
+												onClick={() => onToggleDeviceMute(device.name)}
+												className={`relative flex items-center justify-center h-6 w-6 rounded-full transition-all duration-150 ${
+													isMuted
+														? "bg-muted text-muted-foreground/40"
+														: "bg-foreground/10 text-foreground hover:bg-foreground/20"
+												}`}
+												title={`${isMuted ? "Unmute" : "Mute"} ${device.name}`}
+											>
+												{device.isInput ? (
+													<Mic className="h-3 w-3" />
+												) : (
+													<Volume2 className="h-3 w-3" />
+												)}
+												{isMuted && (
+													<div className="absolute inset-0 flex items-center justify-center">
+														<div className="w-4 h-px bg-current rotate-45" />
+													</div>
+												)}
+											</button>
+										);
+									})}
+								</div>
+							</>
 						)}
 					</div>
 				)}

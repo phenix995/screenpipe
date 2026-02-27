@@ -1030,6 +1030,18 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     }
   }, [processImageFile]);
 
+  // Signal that this chat window is ready to receive prefill events.
+  // Other windows wait for "chat-ready" before emitting "chat-prefill"
+  // to avoid the event being lost when the chat webview is freshly created.
+  useEffect(() => {
+    emit("chat-ready", {});
+    // Also respond to "chat-ping" for when the chat is already open
+    const unlisten = listen("chat-ping", () => {
+      emit("chat-ready", {});
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
   // Listen for chat-prefill events from search modal and pipe creation
   useEffect(() => {
     const unlisten = listen<{ context: string; prompt?: string; frameId?: number; autoSend?: boolean; source?: string }>("chat-prefill", (event) => {

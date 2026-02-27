@@ -120,6 +120,9 @@ pub struct PiManager {
     /// `pi_terminated(pid)` (crash). Each Pi session creates a fresh Arc so
     /// old reader threads don't interfere with new sessions.
     idle_stopped: Arc<AtomicBool>,
+    /// Guard: ensures only one `pi_terminated` event is emitted per session.
+    /// Both the reader thread and watchdog check-and-set this before emitting.
+    terminated_emitted: Arc<AtomicBool>,
 }
 
 impl PiManager {
@@ -133,6 +136,7 @@ impl PiManager {
             last_activity: std::time::Instant::now(),
             watchdog_handle: None,
             idle_stopped: Arc::new(AtomicBool::new(false)),
+            terminated_emitted: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -849,6 +853,7 @@ pub async fn pi_start_inner(
 
     // Update manager
     let idle_stopped = Arc::new(AtomicBool::new(false));
+    let terminated_emitted = Arc::new(AtomicBool::new(false));
     if let Some(m) = manager_guard.as_mut() {
         m.child = Some(child);
         m.stdin = Some(stdin);
@@ -856,8 +861,9 @@ pub async fn pi_start_inner(
         // Reset idle timer so the watchdog doesn't use a stale timestamp
         // from a previous session and immediately kill this new process
         m.last_activity = std::time::Instant::now();
-        // Fresh flag for this session — old reader threads keep their own Arc
+        // Fresh flags for this session — old reader threads keep their own Arc
         m.idle_stopped = idle_stopped.clone();
+        m.terminated_emitted = terminated_emitted.clone();
     }
 
     // Snapshot the state BEFORE dropping the lock, so we don't hold it during I/O
@@ -876,6 +882,7 @@ pub async fn pi_start_inner(
     // real pid (frontend auto-restarts).
     let app_handle = app.clone();
     let idle_stopped_reader = idle_stopped.clone();
+    let terminated_guard = terminated_emitted.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         info!("Pi stdout reader started (pid: {})", pid);
@@ -914,8 +921,13 @@ pub async fn pi_start_inner(
             }
         }
         info!("Pi stdout reader ended (pid: {}), processed {} lines", pid, line_count);
-        let terminated_pid = if idle_stopped_reader.load(Ordering::Acquire) { 0u32 } else { pid };
-        let _ = app_handle.emit("pi_terminated", terminated_pid);
+        // Only emit once per session — watchdog or overlapping sessions could race
+        if terminated_guard.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            let terminated_pid = if idle_stopped_reader.load(Ordering::Acquire) { 0u32 } else { pid };
+            let _ = app_handle.emit("pi_terminated", terminated_pid);
+        } else {
+            debug!("Pi stdout reader: pi_terminated already emitted for this session, skipping");
+        }
     });
 
     // Spawn stderr reader thread — Pi may emit JSON events to stderr in some

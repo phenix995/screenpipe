@@ -581,7 +581,28 @@ impl SettingsStore {
             audio_transcription_engine: audio_engine_str.parse()
                 .unwrap_or(AudioTranscriptionEngine::WhisperLargeV3Turbo),
             transcription_mode: match self.extra.get("transcriptionMode").and_then(|v| v.as_str()) {
-                Some("smart") => TranscriptionMode::Smart,
+                Some("smart") => {
+                    // Only block Smart mode when weak hardware is running a large model —
+                    // the CPU-heavy model saturates the system and the IdleDetector's 70%
+                    // threshold is never reached, creating an infinite deferral loop.
+                    // Small models (e.g. whisper-tiny) on weak hardware are fine.
+                    let engine_is_large = audio_engine_str.contains("large");
+                    if engine_is_large {
+                        let hw = crate::hardware::detect_hardware_capability();
+                        if hw.is_weak_for_large_model {
+                            tracing::warn!(
+                                "smart transcription mode disabled: weak hardware ({} cores, {:.1} GB RAM, GPU={}) \
+                                 with large model '{}'. Forcing Realtime to avoid infinite idle-deferral loop.",
+                                hw.cpu_cores, hw.total_memory_gb, hw.has_gpu, audio_engine_str
+                            );
+                            TranscriptionMode::Realtime
+                        } else {
+                            TranscriptionMode::Smart
+                        }
+                    } else {
+                        TranscriptionMode::Smart
+                    }
+                }
                 _ => TranscriptionMode::Realtime,
             },
             audio_devices: self.audio_devices.clone(),

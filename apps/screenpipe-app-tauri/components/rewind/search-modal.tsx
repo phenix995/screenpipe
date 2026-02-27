@@ -8,7 +8,7 @@ import { useDebounce } from "@/lib/hooks/use-debounce";
 import { format, isToday, isYesterday } from "date-fns";
 import { cn } from "@/lib/utils";
 import { commands } from "@/lib/utils/tauri";
-import { emit } from "@tauri-apps/api/event";
+import { showChatWithPrefill } from "@/lib/chat-utils";
 import { ThumbnailHighlightOverlay } from "./thumbnail-highlight-overlay";
 
 interface SpeakerResult {
@@ -41,38 +41,28 @@ interface SearchModalProps {
   embedded?: boolean;
 }
 
-// stopwords to filter out from suggestions
+// stopwords to filter out from suggestions — keep this minimal so real
+// content words survive. Only filter grammatical words and code tokens.
 const STOP_WORDS = new Set([
+  // grammar / function words
   "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
   "of", "with", "by", "from", "is", "it", "this", "that", "was", "are",
   "be", "has", "had", "have", "not", "no", "do", "does", "did", "will",
   "can", "could", "would", "should", "may", "might", "shall", "if", "so",
-  "as", "he", "she", "we", "they", "you", "i", "my", "your", "his", "her",
+  "as", "he", "she", "we", "they", "you", "my", "your", "his", "her",
   "its", "our", "their", "me", "him", "us", "them", "am", "been", "being",
   "were", "what", "which", "who", "whom", "when", "where", "why", "how",
   "all", "each", "every", "both", "few", "more", "most", "other", "some",
   "such", "than", "too", "very", "just", "about", "above", "after", "again",
   "also", "any", "because", "before", "between", "here", "there", "then",
   "these", "those", "through", "under", "until", "while", "into", "over",
-  "only", "own", "same", "still", "up", "out", "off", "down", "now", "new",
-  "one", "two", "first", "last", "long", "great", "little", "right", "old",
-  "big", "high", "small", "large", "next", "early", "young", "important",
-  "public", "bad", "com", "www", "http", "https", "html", "css", "div",
-  "span", "class", "true", "false", "null", "undefined", "var", "let",
-  "const", "function", "return", "import", "export", "default", "type",
-  "interface", "string", "number", "boolean", "object", "array", "void",
-  "png", "jpg", "svg", "gif", "pdf", "tsx", "jsx", "src", "img", "alt",
-  "width", "height", "style", "font", "size", "color", "text", "data",
-  "value", "name", "index", "item", "list", "page", "file", "path",
-  "error", "log", "get", "set", "app", "use", "end", "start", "time",
-  "date", "day", "year", "month", "week", "like", "make", "know", "take",
-  "come", "see", "look", "find", "give", "tell", "think", "say", "help",
-  "show", "try", "ask", "need", "feel", "become", "leave", "put", "mean",
-  "keep", "let", "begin", "seem", "talk", "turn", "hand", "run", "move",
-  "play", "back", "way", "home", "work", "even", "good", "much", "well",
-  "part", "made", "got", "going", "went", "done", "said", "line", "click",
-  "button", "menu", "view", "open", "close", "save", "edit", "delete",
-  "copy", "paste", "select", "search", "enter", "tab", "window", "screen",
+  "only", "own", "same", "still", "now",
+  // code / web tokens
+  "com", "www", "http", "https", "html", "css", "div", "span", "class",
+  "true", "false", "null", "undefined", "var", "let", "const", "function",
+  "return", "import", "export", "default", "type", "interface", "void",
+  "png", "jpg", "svg", "gif", "src", "img", "alt",
+  "width", "height", "style", "font", "size", "color",
 ]);
 
 function isGarbageWord(word: string): boolean {
@@ -93,8 +83,8 @@ function isGarbageWord(word: string): boolean {
 // words that are proper nouns (Capitalized in original text) are more interesting
 function extractInterestingWords(text: string): Map<string, { count: number; original: string }> {
   const words = new Map<string, { count: number; original: string }>();
-  // split on whitespace/punctuation but preserve original casing
-  const tokens = text.match(/[A-Za-z][a-z]{2,24}/g) || [];
+  // split on whitespace/punctuation, match words 3-25 chars (letters, including unicode)
+  const tokens = text.match(/[\p{L}]{3,25}/gu) || [];
   for (const token of tokens) {
     const lower = token.toLowerCase();
     if (STOP_WORDS.has(lower)) continue;
@@ -128,9 +118,7 @@ function useSuggestions(isOpen: boolean) {
         const now = new Date();
         const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
         // Match the keyword search exclusion window (1 minute) so suggestions
-        // only contain words from data that's already FTS-indexed. Previously
-        // used `now` which meant suggestions showed words the keyword search
-        // couldn't find yet (FTS indexer runs every 30s).
+        // only contain words from data that's already FTS-indexed.
         const endTime = new Date(now.getTime() - 60_000);
 
         const params = new URLSearchParams({
@@ -141,13 +129,19 @@ function useSuggestions(isOpen: boolean) {
           end_time: endTime.toISOString(),
         });
 
-        const resp = await fetch(`http://localhost:3030/search?${params}`);
-        if (!resp.ok || cancelled) return;
+        const resp = await fetch(`http://localhost:3030/search?${params}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        if (cancelled) return;
+        if (!resp.ok) {
+          if (!cancelled) setIsLoading(false);
+          return;
+        }
 
         const data = await resp.json();
         const items = data?.data || [];
 
-        // collect app names (used as fallback suggestions)
+        // collect app names (always useful as suggestions)
         const appNameCounts = new Map<string, { count: number; original: string }>();
         const allWords = new Map<string, { count: number; original: string }>();
 
@@ -200,8 +194,9 @@ function useSuggestions(isOpen: boolean) {
         const shuffled = topPool.sort(() => Math.random() - 0.5);
         let picked = shuffled.slice(0, 8).map(([, info]) => info.original);
 
-        // fallback: if we got fewer than 4 keyword suggestions, fill with app names
-        if (picked.length < 4 && appNameCounts.size > 0) {
+        // fallback: always fill remaining slots with top app names
+        // (app names are the most reliable suggestions — always available)
+        if (picked.length < 8 && appNameCounts.size > 0) {
           const topApps = [...appNameCounts.entries()]
             .sort((a, b) => b[1].count - a[1].count)
             .slice(0, 8 - picked.length)
@@ -631,14 +626,8 @@ export function SearchModal({ isOpen, onClose, onNavigateToTimestamp, embedded =
     // Close search modal first
     onClose();
 
-    // Show chat window (it will overlay on top of timeline, not close it)
-    await commands.showWindow("Chat");
-
-    // Small delay to ensure chat window's React components are mounted and listening
-    await new Promise(resolve => setTimeout(resolve, 150));
-
-    // Emit prefill event with context and frame image
-    await emit("chat-prefill", { context, frameId: result.frame_id });
+    // Show chat window and deliver prefill (handles fresh webview creation)
+    await showChatWithPrefill({ context, frameId: result.frame_id });
   }, [filteredResults, selectedIndex, onClose]);
 
   // Handle going back from speaker drill-down
