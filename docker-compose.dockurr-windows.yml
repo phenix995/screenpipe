@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   windows-vm:
     image: dockurr/windows
@@ -9,13 +7,12 @@ services:
       RAM_SIZE: "8G"
       CPU_CORES: "4"
       DISK_SIZE: "64G"
+      KVM: "N"  # Disable KVM for Windows hosts (emulation mode - slower but works)
     volumes:
       # Mount project directory
       - .:/shared/screenpipe
       # Mount output directory
       - C:\Users\Aurora\Documents\Build:/shared/output
-    devices:
-      - /dev/kvm
     cap_add:
       - NET_ADMIN
     ports:
