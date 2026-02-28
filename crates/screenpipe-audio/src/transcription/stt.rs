@@ -27,6 +27,26 @@ use crate::{AudioInput, TranscriptionResult};
 
 pub const SAMPLE_RATE: u32 = 16000;
 
+/// Trait for alternate STT engines (e.g. Qwen3-ASR via audiopipe).
+/// Uses a trait object so the type is always available regardless of feature flags.
+pub trait AlternateStt: Send {
+    fn transcribe(&mut self, audio: &[f32], sample_rate: u32) -> Result<String>;
+}
+
+/// Optional alternate STT engine, wrapped for shared ownership + interior mutability.
+pub type AlternateSttEngine = Arc<StdMutex<Box<dyn AlternateStt + Send>>>;
+
+#[cfg(feature = "qwen3-asr")]
+impl AlternateStt for audiopipe::Model {
+    fn transcribe(&mut self, audio: &[f32], sample_rate: u32) -> Result<String> {
+        let opts = audiopipe::TranscribeOptions::default();
+        let result = self
+            .transcribe_with_sample_rate(audio, sample_rate, opts)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        Ok(result.text)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn stt_sync(
     audio: &[f32],
@@ -37,6 +57,7 @@ pub async fn stt_sync(
     languages: Vec<Language>,
     whisper_state: &mut WhisperState,
     vocabulary: &[VocabularyEntry],
+    alternate_stt: Option<AlternateSttEngine>,
 ) -> Result<String> {
     let audio = audio.to_vec();
 
@@ -51,6 +72,7 @@ pub async fn stt_sync(
         languages,
         whisper_state,
         vocabulary,
+        alternate_stt,
     )
     .await
 }
@@ -65,6 +87,7 @@ pub async fn stt(
     languages: Vec<Language>,
     whisper_state: &mut WhisperState,
     vocabulary: &[VocabularyEntry],
+    alternate_stt: Option<AlternateSttEngine>,
 ) -> Result<String> {
     let transcription: Result<String> =
         if *audio_transcription_engine == AudioTranscriptionEngine::Disabled {
@@ -85,6 +108,14 @@ pub async fn stt(
                     // Fallback to Whisper
                     process_with_whisper(audio, languages.clone(), whisper_state, vocabulary).await
                 }
+            }
+        } else if *audio_transcription_engine == AudioTranscriptionEngine::Qwen3Asr {
+            // Qwen3-ASR via alternate STT engine (audiopipe)
+            if let Some(ref engine) = alternate_stt {
+                let mut engine = engine.lock().map_err(|e| anyhow::anyhow!("stt model lock: {}", e))?;
+                engine.transcribe(audio, sample_rate)
+            } else {
+                Err(anyhow::anyhow!("qwen3-asr model not initialized"))
             }
         } else {
             // Existing Whisper implementation
@@ -121,6 +152,7 @@ pub async fn process_audio_input(
     metrics: Arc<AudioPipelineMetrics>,
     vocabulary: &[VocabularyEntry],
     pre_written_path: Option<String>,
+    alternate_stt: Option<AlternateSttEngine>,
 ) -> Result<()> {
     // NOTE: capture_timestamp is set when audio enters the channel, but smart mode
     // deferral can delay processing by 20+ minutes. The DB now uses Utc::now() at
@@ -142,6 +174,8 @@ pub async fn process_audio_input(
         capture_timestamp: audio.capture_timestamp,
     };
 
+    let is_output_device =
+        audio.device.device_type == crate::core::device::DeviceType::Output;
     let (mut segments, speech_ratio_ok, speech_ratio) = prepare_segments(
         &audio_data,
         vad_engine,
@@ -149,6 +183,7 @@ pub async fn process_audio_input(
         embedding_manager,
         embedding_extractor,
         &audio.device.to_string(),
+        is_output_device,
     )
     .await?;
 
@@ -188,6 +223,7 @@ pub async fn process_audio_input(
             timestamp,
             whisper_state,
             vocabulary,
+            alternate_stt.clone(),
         )
         .await?;
 
@@ -210,6 +246,7 @@ pub async fn run_stt(
     timestamp: u64,
     whisper_state: &mut WhisperState,
     vocabulary: &[VocabularyEntry],
+    alternate_stt: Option<AlternateSttEngine>,
 ) -> Result<TranscriptionResult> {
     let audio = segment.samples.clone();
     let sample_rate = segment.sample_rate;
@@ -222,6 +259,7 @@ pub async fn run_stt(
         languages.clone(),
         whisper_state,
         vocabulary,
+        alternate_stt,
     )
     .await
     {

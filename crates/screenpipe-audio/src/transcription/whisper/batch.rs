@@ -59,7 +59,7 @@ pub async fn process_with_whisper(
     // Entropy threshold: high-entropy (repetitive/looping) output is suppressed
     params.set_entropy_thold(2.4);
     // Log-probability threshold: low-confidence segments are dropped
-    params.set_logprob_thold(-1.0);
+    params.set_logprob_thold(-2.0);
 
     whisper_state.pcm_to_mel(&audio, 2)?;
     let (_, lang_tokens) = whisper_state.lang_detect(0, 2)?;
@@ -101,58 +101,5 @@ pub async fn process_with_whisper(
         }
     }
 
-    // Post-processing: filter out known Whisper hallucination patterns.
-    // When Whisper processes noise/non-speech, it often produces these short generic phrases
-    // as the ENTIRE output. Real speech produces longer, contextual text.
-    let trimmed = transcript.trim();
-    if is_hallucination(trimmed) {
-        debug!("filtered hallucination: {:?}", trimmed);
-        return Ok(String::new());
-    }
-
     Ok(transcript)
-}
-
-/// Check if transcription output is a known Whisper hallucination pattern.
-/// These are short generic phrases that Whisper produces on silence/noise/non-speech audio.
-/// Only matches when the phrase IS the entire output (not part of a longer transcription).
-fn is_hallucination(text: &str) -> bool {
-    // Normalize: lowercase, strip punctuation and extra whitespace
-    let normalized: String = text
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    if normalized.is_empty() {
-        return false; // empty is fine, not hallucination
-    }
-
-    // Known hallucination phrases (normalized, no punctuation)
-    const HALLUCINATIONS: &[&str] = &[
-        "thank you",
-        "thanks for watching",
-        "thanks for listening",
-        "so lets go",
-        "lets go",
-        "bye",
-        "bye bye",
-        "goodbye",
-        "please subscribe",
-        "subscribe",
-        "like and subscribe",
-        "you",
-        "yeah",
-        "oh",
-        "hmm",
-        "music",
-        "applause",
-        "laughter",
-        "silence",
-    ];
-
-    HALLUCINATIONS.contains(&normalized.as_str())
 }

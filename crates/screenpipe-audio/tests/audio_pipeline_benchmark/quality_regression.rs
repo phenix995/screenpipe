@@ -52,6 +52,7 @@ async fn whisper_hallucination_on_silence() {
         vec![Language::English],
         &mut whisper_state,
         &[],
+        None,
     )
     .await
     .expect("stt failed");
@@ -98,6 +99,7 @@ async fn whisper_hallucination_on_noise() {
         vec![Language::English],
         &mut whisper_state,
         &[],
+        None,
     )
     .await
     .expect("stt failed");
@@ -142,6 +144,7 @@ async fn whisper_hallucination_on_ambient() {
         vec![Language::English],
         &mut whisper_state,
         &[],
+        None,
     )
     .await
     .expect("stt failed");
@@ -247,6 +250,7 @@ async fn whisper_real_speech_still_works() {
                 vec![Language::English],
                 &mut whisper_state,
                 &[],
+                None,
             )
             .await
             .expect("stt failed");

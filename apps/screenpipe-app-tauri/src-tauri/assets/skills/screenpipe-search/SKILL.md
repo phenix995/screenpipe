@@ -51,10 +51,11 @@ curl "http://localhost:3030/search?q=QUERY&content_type=all&limit=10&start_time=
 
 1. **ALWAYS include `start_time`** — the database has hundreds of thousands of entries. Queries without time bounds WILL timeout.
 2. **Start with short time ranges** — default to last 1-2 hours. Only expand if no results found.
-3. **Use `app_name` filter** whenever the user mentions a specific app.
-4. **Keep `limit` low** (5-10) initially. Only increase if the user needs more.
-5. **"recent"** = last 30 minutes. **"today"** = since midnight. **"yesterday"** = yesterday's date range.
-6. If a search times out, retry with a narrower time range (e.g. 30 mins instead of 2 hours).
+3. **First search: ONLY use time params** (start_time, end_time). No `q`, no `app_name`, no `content_type`. This gives ground truth of what's actually recorded. Then scan results to identify correct `app_name` values and content patterns. Only THEN narrow with filters using the exact values you observed. App names are case-sensitive and may differ from what users say (e.g. "Discord" might be stored as "Discord.exe" or "discord"). The `q` param searches captured text content (accessibility/OCR), NOT app names — an app can be visible without its name appearing in the captured text.
+4. **NEVER report "no data found" after only one filtered search.** Always verify with an unfiltered time-only search first.
+5. **Keep `limit` low** (5-10) initially. Only increase if the user needs more.
+6. **"recent"** = last 30 minutes. **"today"** = since midnight. **"yesterday"** = yesterday's date range.
+7. If a search times out, retry with a narrower time range (e.g. 30 mins instead of 2 hours).
 
 ### Example Searches
 
@@ -242,7 +243,7 @@ You were browsing GitHub at [10:30 AM — Chrome](screenpipe://frame/12345) when
 - Timestamps in results are UTC. Convert to the user's local timezone when displaying.
 - If asked "what did I work on today?", search with broad terms and short time ranges, then summarize by app/activity.
 - If asked about meetings, use `content_type=audio`.
-- If asked about a specific app, always use the `app_name` filter.
+- If asked about a specific app, first search with only time filters to discover the exact `app_name` value stored in the database, then filter by that value.
 - Combine multiple searches to build a complete picture (e.g., screen + audio for a meeting).
 - **For aggregation over large datasets**, use raw SQL instead of paginating through search results. The `/search` endpoint returns paginated results (default limit 20), so summarizing thousands of events requires raw SQL. Examples:
 

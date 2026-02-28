@@ -40,7 +40,7 @@ use crate::{
         stt::{process_audio_input, SAMPLE_RATE},
         whisper::model::{create_whisper_context_parameters, download_whisper_model},
     },
-    utils::{audio::{normalize_v2, resample}, ffmpeg::{get_new_file_path, write_audio_to_file}},
+    utils::{audio::resample, ffmpeg::{get_new_file_path, write_audio_to_file}},
     vad::{silero::SileroVad, webrtc::WebRtcVad, VadEngine, VadEngineEnum},
     AudioInput, TranscriptionResult,
 };
@@ -336,7 +336,6 @@ impl AudioManager {
         let languages = options.languages.clone();
         let deepgram_api_key = options.deepgram_api_key.clone();
         let realtime_enabled = options.enable_realtime;
-        let transcription_mode = options.transcription_mode.clone();
         let device_clone = device.clone();
         let metrics = self.metrics.clone();
 
@@ -347,7 +346,6 @@ impl AudioManager {
                 recording_sender.clone(),
                 is_running.clone(),
                 metrics,
-                transcription_mode,
             ));
 
             let realtime_handle = if realtime_enabled {
@@ -408,6 +406,7 @@ impl AudioManager {
         let deepgram_api_key = options.deepgram_api_key.clone();
         let audio_transcription_engine = options.transcription_engine.clone();
         let vocabulary = options.vocabulary.clone();
+        let is_batch_mode = options.transcription_mode == TranscriptionMode::Batch;
         let vad_engine = self.vad_engine.clone();
         let whisper_receiver = self.recording_receiver.clone();
         let metrics = self.metrics.clone();
@@ -453,19 +452,53 @@ impl AudioManager {
             .map_err(|e| anyhow!("failed to create initial whisper state: {}", e))?;
         info!("whisper state created (will be reused across segments)");
 
+        // Initialize alternate STT engine (Qwen3-ASR) if selected
+        let alternate_stt: Option<crate::transcription::stt::AlternateSttEngine> = {
+            #[cfg(feature = "qwen3-asr")]
+            {
+                if *audio_transcription_engine == AudioTranscriptionEngine::Qwen3Asr {
+                    match tokio::task::spawn_blocking(|| {
+                        audiopipe::Model::from_pretrained("qwen3-asr-0.6b")
+                    })
+                    .await
+                    {
+                        Ok(Ok(model)) => {
+                            info!("qwen3-asr model loaded successfully");
+                            Some(std::sync::Arc::new(std::sync::Mutex::new(
+                                Box::new(model)
+                                    as Box<dyn crate::transcription::stt::AlternateStt + Send>,
+                            )))
+                        }
+                        Ok(Err(e)) => {
+                            error!("failed to load qwen3-asr model: {}", e);
+                            None
+                        }
+                        Err(e) => {
+                            error!("qwen3-asr model loading task panicked: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+            #[cfg(not(feature = "qwen3-asr"))]
+            {
+                None
+            }
+        };
+
         Ok(tokio::spawn(async move {
             while let Ok(audio) = whisper_receiver.recv() {
-                info!("Received audio from device: {:?}", audio.device.name);
+                debug!("received audio from device: {:?}", audio.device.name);
 
-                // Audio-based call detection: normalize first so the threshold works
-                // consistently across devices with different native gain levels
+                // Audio-based call detection: update meeting detector with speech activity
                 if let Some(ref meeting) = meeting_detector {
-                    let normalized = normalize_v2(&audio.data);
                     let rms = {
-                        let sum_sq: f32 = normalized.iter().map(|&x| x * x).sum();
-                        (sum_sq / normalized.len() as f32).sqrt()
+                        let sum_sq: f32 = audio.data.iter().map(|&x| x * x).sum();
+                        (sum_sq / audio.data.len() as f32).sqrt()
                     };
-                    meeting.on_audio_activity(&audio.device.device_type, rms > 0.08);
+                    meeting.on_audio_activity(&audio.device.device_type, rms > 0.05);
                 }
 
                 // ALWAYS persist audio to disk immediately, before any deferral.
@@ -504,35 +537,101 @@ impl AudioManager {
                     None
                 };
 
-                // Meeting detector: log meeting metadata (no deferral)
-                if let Some(ref meeting) = meeting_detector {
-                    meeting.check_grace_period().await;
-                    if meeting.is_in_meeting() {
-                        if let Some(app) = meeting.current_meeting_app().await {
-                            debug!("batch mode: meeting detected ({}), metadata only", app);
+                // Batch mode: defer transcription during audio sessions (meetings, YouTube, etc).
+                // Audio is already persisted to disk + DB above.
+                // When the session ends, reconciliation will transcribe all untranscribed chunks.
+                if is_batch_mode {
+                    if let Some(ref meeting) = meeting_detector {
+                        let was_in_session = meeting.is_in_audio_session();
+                        meeting.check_grace_period().await;
+                        let now_in_session = meeting.is_in_audio_session();
+
+                        if was_in_session && !now_in_session {
+                            // Audio session just ended — trigger immediate reconciliation
+                            info!("batch mode: audio session ended, transcribing accumulated audio");
+                            let count = super::reconciliation::reconcile_untranscribed(
+                                &db,
+                                &whisper_context,
+                                audio_transcription_engine.clone(),
+                                deepgram_api_key.clone(),
+                                languages.clone(),
+                                &vocabulary,
+                            )
+                            .await;
+                            info!("batch mode: transcribed {} chunks after session end", count);
+                        } else if now_in_session {
+                            debug!("batch mode: in audio session, deferring transcription");
+                        } else {
+                            // Not in an audio session — transcribe immediately like realtime
+                            if let Err(e) = process_audio_input(
+                                audio.clone(),
+                                vad_engine.clone(),
+                                segmentation_model_path.clone(),
+                                embedding_manager.clone(),
+                                embedding_extractor.clone(),
+                                &output_path.clone().unwrap(),
+                                audio_transcription_engine.clone(),
+                                deepgram_api_key.clone(),
+                                languages.clone(),
+                                &transcription_sender.clone(),
+                                &mut whisper_state,
+                                metrics.clone(),
+                                &vocabulary,
+                                persisted_file_path.clone(),
+                                alternate_stt.clone(),
+                            )
+                            .await
+                            {
+                                error!("Error processing audio: {:?}", e);
+                            }
+                        }
+                    } else {
+                        // No meeting detector available — transcribe immediately
+                        if let Err(e) = process_audio_input(
+                            audio.clone(),
+                            vad_engine.clone(),
+                            segmentation_model_path.clone(),
+                            embedding_manager.clone(),
+                            embedding_extractor.clone(),
+                            &output_path.clone().unwrap(),
+                            audio_transcription_engine.clone(),
+                            deepgram_api_key.clone(),
+                            languages.clone(),
+                            &transcription_sender.clone(),
+                            &mut whisper_state,
+                            metrics.clone(),
+                            &vocabulary,
+                            persisted_file_path.clone(),
+                            alternate_stt.clone(),
+                        )
+                        .await
+                        {
+                            error!("Error processing audio: {:?}", e);
                         }
                     }
-                }
-
-                if let Err(e) = process_audio_input(
-                    audio.clone(),
-                    vad_engine.clone(),
-                    segmentation_model_path.clone(),
-                    embedding_manager.clone(),
-                    embedding_extractor.clone(),
-                    &output_path.clone().unwrap(),
-                    audio_transcription_engine.clone(),
-                    deepgram_api_key.clone(),
-                    languages.clone(),
-                    &transcription_sender.clone(),
-                    &mut whisper_state,
-                    metrics.clone(),
-                    &vocabulary,
-                    persisted_file_path.clone(),
-                )
-                .await
-                {
-                    error!("Error processing audio: {:?}", e);
+                } else {
+                    // Realtime mode: transcribe immediately
+                    if let Err(e) = process_audio_input(
+                        audio.clone(),
+                        vad_engine.clone(),
+                        segmentation_model_path.clone(),
+                        embedding_manager.clone(),
+                        embedding_extractor.clone(),
+                        &output_path.clone().unwrap(),
+                        audio_transcription_engine.clone(),
+                        deepgram_api_key.clone(),
+                        languages.clone(),
+                        &transcription_sender.clone(),
+                        &mut whisper_state,
+                        metrics.clone(),
+                        &vocabulary,
+                        persisted_file_path.clone(),
+                        alternate_stt.clone(),
+                    )
+                    .await
+                    {
+                        error!("Error processing audio: {:?}", e);
+                    }
                 }
             }
         }))

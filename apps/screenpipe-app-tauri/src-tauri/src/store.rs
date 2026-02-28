@@ -240,7 +240,10 @@ fn default_true() -> bool {
 }
 
 fn default_overlay_mode() -> String {
-    "fullscreen".to_string()
+    #[cfg(target_os = "macos")]
+    { "fullscreen".to_string() }
+    #[cfg(not(target_os = "macos"))]
+    { "window".to_string() }
 }
 
 #[derive(Serialize, Deserialize, Type,Clone,Default)]
@@ -283,7 +286,7 @@ impl Default for AIPreset {
             prompt: String::new(),
             provider: AIProviderType::ScreenpipeCloud,
             url: "https://api.screenpi.pe/v1".to_string(),
-            model: "claude-haiku-4-5@20251001".to_string(),
+            model: "claude-haiku-4-5".to_string(),
             default_preset: false,
             api_key: None,
             max_context_chars: 512000,
@@ -428,7 +431,7 @@ impl Default for SettingsStore {
 "#.to_string(),
             provider: AIProviderType::ScreenpipeCloud,
             url: "https://api.screenpi.pe/v1".to_string(),
-            model: "claude-haiku-4-5@20251001".to_string(),
+            model: "claude-haiku-4-5".to_string(),
             default_preset: true,
             api_key: None,
             max_context_chars: 128000,
@@ -520,7 +523,10 @@ impl Default for SettingsStore {
             enable_input_capture: true,
             enable_accessibility: true,
             auto_update: true,
+            #[cfg(target_os = "macos")]
             overlay_mode: "fullscreen".to_string(),
+            #[cfg(not(target_os = "macos"))]
+            overlay_mode: "window".to_string(),
             show_overlay_in_screen_recording: false,
             video_quality: "balanced".to_string(),
             extra: std::collections::HashMap::new(),

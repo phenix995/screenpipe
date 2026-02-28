@@ -306,21 +306,12 @@ const AISection = ({
       if (preset && !isDuplicating) {
         const updatedPresets = settings.aiPresets.map((p) => {
           if (p.id === preset.id) {
-            const updatedPreset = {
+            return {
               ...settingsPreset,
               prompt: settingsPreset?.prompt || DEFAULT_PROMPT,
               maxContextChars: settingsPreset?.maxContextChars || 512000,
               defaultPreset: p.defaultPreset,
             } as AIPreset;
-
-            // If this is the default preset, update global settings too
-            if (p.defaultPreset) {
-              updateSettings({
-                aiPresets: updatedPresets,
-              });
-            }
-
-            return updatedPreset;
           }
           return p;
         });
@@ -1133,7 +1124,7 @@ const AISection = ({
                     <div key={key} className="flex items-start gap-2">
                       <div className="flex items-center gap-2 min-w-[180px]">
                         {result.status === "pass" ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                          <CheckCircle2 className="h-4 w-4 text-foreground shrink-0" />
                         ) : result.status === "fail" ? (
                           <XCircle className="h-4 w-4 text-destructive shrink-0" />
                         ) : result.status === "running" ? (

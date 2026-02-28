@@ -803,13 +803,17 @@ jobs:
           # Explicitly set trust for root CA and intermediate CAs.
           # This is critical on self-hosted runners (e.g. Mac Mini) where
           # SystemRootCertificates.keychain may not be accessible to codesign.
+          # IMPORTANT: Use timeout because `security add-trusted-cert` hangs
+          # indefinitely on GH-hosted runners (no SecurityAgent/GUI session).
+          # On GH-hosted runners this will timeout and that's fine — they have
+          # Apple Root CA in SystemRootCertificates.keychain already.
           echo "=== Setting trust policies ==="
-          security add-trusted-cert -r trustRoot -p codeSign -k "$BUILD_KC" \
-            ~/apple-certs/AppleRootCA.cer 2>&1 || echo "  (trust AppleRootCA: already set)"
-          security add-trusted-cert -r unspecified -p codeSign -k "$BUILD_KC" \
-            ~/apple-certs/DeveloperIDCA.cer 2>&1 || echo "  (trust DeveloperIDCA: already set)"
-          security add-trusted-cert -r unspecified -p codeSign -k "$BUILD_KC" \
-            ~/apple-certs/DeveloperIDG2CA.cer 2>&1 || echo "  (trust DeveloperIDG2CA: already set)"
+          timeout 10 security add-trusted-cert -r trustRoot -p codeSign -k "$BUILD_KC" \
+            ~/apple-certs/AppleRootCA.cer 2>&1 || echo "  (trust AppleRootCA: skipped or already set)"
+          timeout 10 security add-trusted-cert -r unspecified -p codeSign -k "$BUILD_KC" \
+            ~/apple-certs/DeveloperIDCA.cer 2>&1 || echo "  (trust DeveloperIDCA: skipped or already set)"
+          timeout 10 security add-trusted-cert -r unspecified -p codeSign -k "$BUILD_KC" \
+            ~/apple-certs/DeveloperIDG2CA.cer 2>&1 || echo "  (trust DeveloperIDG2CA: skipped or already set)"
 
           # Ensure login keychain + System Roots are in the search list
           security list-keychains -d user -s "$BUILD_KC" \
@@ -840,6 +844,24 @@ jobs:
           echo "args=$ARGS" >> $GITHUB_OUTPUT
           echo "Final tauri args: $ARGS"
 
+      - name: Re-unlock build keychain before signing (macOS)
+        if: matrix.os_type == 'macos'
+        shell: bash
+        run: |
+          # Re-unlock the build keychain right before tauri build to ensure it
+          # hasn't auto-locked during cargo compilation (can take 5+ minutes).
+          BUILD_KC="$HOME/Library/Keychains/build.keychain-db"
+          if [ -f "$BUILD_KC" ]; then
+            security unlock-keychain -p "build_password" "$BUILD_KC"
+            # Re-assert the keychain search list (other steps may have modified it)
+            security list-keychains -d user -s "$BUILD_KC" \
+              "$HOME/Library/Keychains/login.keychain-db" \
+              "/Library/Keychains/System.keychain" \
+              "/System/Library/Keychains/SystemRootCertificates.keychain"
+            echo "Build keychain unlocked and search list verified"
+            security find-identity -v -p codesigning "$BUILD_KC" 2>&1 | tail -3
+          fi
+
       - name: Build
         uses: tauri-apps/tauri-action@v0.5.17
         env:
@@ -848,9 +870,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           # for release
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # for macos signing — cert is pre-imported into login keychain above,
+          # for macos signing — cert is pre-imported into build keychain above,
           # so we do NOT pass APPLE_CERTIFICATE (which would create a temp keychain
-          # that fails with errSecInternalComponent on some self-hosted runners)
+          # that conflicts with our build keychain setup)
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

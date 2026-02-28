@@ -45,4 +45,9 @@ impl VadEngine for WebRtcVad {
 
         Ok(VadStatus::Speech)
     }
+
+    fn set_speech_threshold(&mut self, _threshold: Option<f32>) {
+        // WebRTC VAD uses mode-based sensitivity, not probability thresholds.
+        // No-op — only affects Silero VAD.
+    }
 }

@@ -202,7 +202,7 @@ export function AccountSection() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">screenpipe pro</h3>
+              <h3 className="text-lg font-semibold">Screenpipe Pro</h3>
               <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">active</span>
             </div>
             <div className="flex gap-2">
@@ -217,7 +217,7 @@ export function AccountSection() {
                   )
                 }
               >
-                manage subscription <ExternalLinkIcon className="w-3.5 h-3.5 ml-1.5" />
+                Manage subscription <ExternalLinkIcon className="w-3.5 h-3.5 ml-1.5" />
               </Button>
             </div>
           </div>
@@ -241,7 +241,7 @@ export function AccountSection() {
         <>
           <Card className="p-8 flex flex-col items-center text-center">
             <UserCog className="h-10 w-10 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-1">sign in to screenpipe</h3>
+            <h3 className="text-lg font-semibold mb-1">Sign in to Screenpipe</h3>
             <p className="text-sm text-muted-foreground mb-6">
               free account — no credit card required
             </p>
@@ -250,7 +250,7 @@ export function AccountSection() {
               size="lg"
               onClick={() => commands.openLoginWindow()}
             >
-              log in
+              Log in
               <ExternalLinkIcon className="w-4 h-4 ml-2" />
             </Button>
           </Card>
@@ -259,7 +259,7 @@ export function AccountSection() {
           <details className="group">
             <summary className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
               <Sparkles className="h-4 w-4" />
-              optional: upgrade to screenpipe pro
+              Optional: upgrade to Screenpipe Pro
               <span className="text-xs ml-auto group-open:hidden">show details</span>
             </summary>
             <Card className="mt-3 p-5">
@@ -267,7 +267,7 @@ export function AccountSection() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">screenpipe pro</h3>
+                    <h3 className="text-lg font-semibold">Screenpipe Pro</h3>
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold">{isAnnual ? "$26" : "$39"}</span>
@@ -333,7 +333,7 @@ export function AccountSection() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">screenpipe pro</h3>
+                    <h3 className="text-lg font-semibold">Screenpipe Pro</h3>
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold">{isAnnual ? "$26" : "$39"}</span>

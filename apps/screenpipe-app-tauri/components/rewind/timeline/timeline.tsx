@@ -1357,7 +1357,7 @@ export const TimelineSlider = ({
 										frameDate >= selectionRange.start &&
 										frameDate <= selectionRange.end;
 
-									const hasAudio = Boolean(frame?.devices?.[0]?.audio?.length);
+									const hasAudio = frame?.devices?.some((d) => d.audio?.some((a) => a.transcription?.trim()));
 									const isCurrent = frameIndex === currentIndex;
 									const matchesDevice = selectedDeviceId === "all" || frame.devices.some((d) => d.device_id === selectedDeviceId);
 									const matchesApp = selectedAppName === "all" || frame.devices.some((d) => d.metadata?.app_name === selectedAppName);

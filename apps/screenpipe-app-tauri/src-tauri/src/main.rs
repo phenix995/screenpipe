@@ -384,20 +384,28 @@ async fn apply_shortcuts(app: &AppHandle, config: &ShortcutConfig) -> Result<(),
             }
             #[cfg(not(target_os = "macos"))]
             {
+                use crate::window_api::main_label_for_mode;
+                use crate::store::SettingsStore;
+                let mode = SettingsStore::get(app)
+                    .unwrap_or_default()
+                    .unwrap_or_default()
+                    .overlay_mode;
+                let label = main_label_for_mode(&mode);
+
                 // Debug: list all existing windows
-                for (label, _) in app.webview_windows() {
-                    info!("existing window: {}", label);
+                for (wlabel, _) in app.webview_windows() {
+                    info!("existing window: {}", wlabel);
                 }
 
-                if let Some(window) = app.get_webview_window("main") {
-                    info!("found main window, checking visibility");
+                if let Some(window) = app.get_webview_window(label) {
+                    info!("found {} window, checking visibility", label);
                     match window.is_visible() {
                         Ok(true) => {
-                            info!("main window is visible, hiding it");
+                            info!("{} window is visible, hiding it", label);
                             hide_main_window(app)
                         }
                         Ok(false) => {
-                            info!("main window exists but not visible, showing it");
+                            info!("{} window exists but not visible, showing it", label);
                             show_main_window(app, false)
                         }
                         Err(e) => {
@@ -406,7 +414,7 @@ async fn apply_shortcuts(app: &AppHandle, config: &ShortcutConfig) -> Result<(),
                         }
                     }
                 } else {
-                    info!("main window not found, creating it");
+                    info!("{} window not found, creating it", label);
                     show_main_window(app, false)
                 }
             }
@@ -538,7 +546,14 @@ async fn apply_shortcuts(app: &AppHandle, config: &ShortcutConfig) -> Result<(),
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
-                    if let Some(window) = app.get_webview_window("main") {
+                    use crate::window_api::main_label_for_mode;
+                    use crate::store::SettingsStore;
+                    let mode = SettingsStore::get(app)
+                        .unwrap_or_default()
+                        .unwrap_or_default()
+                        .overlay_mode;
+                    let label = main_label_for_mode(&mode);
+                    if let Some(window) = app.get_webview_window(label) {
                         if !window.is_visible().unwrap_or(false) {
                             show_main_window(app, false);
                         }
@@ -1224,6 +1239,7 @@ async fn main() {
                 pi::pi_prompt,
                 pi::pi_abort,
                 pi::pi_new_session,
+                pi::pi_update_config,
                 // Reminders commands
                 reminders::reminders_status,
                 reminders::reminders_authorize,
@@ -1284,7 +1300,7 @@ async fn main() {
         handle: Arc::new(tokio::sync::Mutex::new(None)),
         is_starting: Arc::new(AtomicBool::new(false)),
     };
-    let pi_state = pi::PiState(Arc::new(tokio::sync::Mutex::new(None)));
+    let pi_state = pi::PiState(Arc::new(tokio::sync::Mutex::new(pi::PiPool::new())));
     let reminders_state = reminders::RemindersState::new();
     let suggestions_state = suggestions::SuggestionsState::new();
     #[allow(clippy::single_match)]
@@ -1447,6 +1463,7 @@ async fn main() {
             pi::pi_prompt,
             pi::pi_abort,
             pi::pi_new_session,
+            pi::pi_update_config,
             // Reminders commands
             reminders::reminders_status,
             reminders::reminders_authorize,
@@ -1588,12 +1605,12 @@ async fn main() {
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_writer(file_appender)
                 .with_ansi(false)
-                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error"));
+                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn"));
 
             // Create a custom layer for console logging
             let console_layer = tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stdout)
-                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error"));
+                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn"));
 
             // Initialize the tracing subscriber with both layers + optional Sentry layer
             // The Sentry layer captures error!() and warn!() events (not just panics)
@@ -1796,6 +1813,9 @@ async fn main() {
             // but existing panels with MoveToActiveSpace + level 1001 can.
             // The Chat creation path only configures level/behaviors — it
             // does NOT activate or show, so no blink or focus-steal here.
+            // macOS-only: on Windows/Linux the non-macOS chat builder doesn't
+            // set .visible(false), causing a visible chat window on startup.
+            #[cfg(target_os = "macos")]
             if onboarding_store.is_completed {
                 let app_handle_chat = app.handle().clone();
                 tauri::async_runtime::spawn(async move {

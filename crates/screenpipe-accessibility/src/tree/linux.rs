@@ -26,7 +26,7 @@ use std::time::Instant;
 use tracing::{debug, warn};
 use zbus::blocking::Connection;
 use zbus::names::{BusName, InterfaceName};
-use zbus::zvariant::{ObjectPath, OwnedValue};
+use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 // ---------------------------------------------------------------------------
 // AT-SPI2 role constants (from at-spi2-core/atspi-constants.h)
@@ -656,6 +656,37 @@ fn connect_to_atspi_bus() -> Result<Connection> {
     Ok(conn)
 }
 
+/// Enable accessibility for Chromium/Electron apps.
+///
+/// Chromium only builds its AT-SPI2 tree when it detects an AT is active:
+/// 1. IsEnabled=true on session bus — checked at startup (future launches)
+/// 2. RegisterEvent on a11y bus — emits EventListenerRegistered signal (running apps)
+fn enable_accessibility(a11y_conn: &Connection) {
+    // 1. Set IsEnabled on the session bus so future Chromium/Electron launches build their tree
+    if let Ok(session) = Connection::session() {
+        let _ = dbus_call(
+            &session,
+            "org.a11y.Bus",
+            "/org/a11y/bus",
+            DBUS_PROPERTIES,
+            "Set",
+            &("org.a11y.Status", "IsEnabled", Value::Bool(true)),
+        );
+        debug!("Set org.a11y.Status.IsEnabled = true");
+    }
+
+    // 2. Register for events to trigger already-running apps via EventListenerRegistered signal
+    let _ = dbus_call(
+        a11y_conn,
+        "org.a11y.atspi.Registry",
+        "/org/a11y/atspi/registry",
+        "org.a11y.atspi.Registry",
+        "RegisterEvent",
+        &("object:state-changed",),
+    );
+    debug!("Registered AT-SPI2 event listener");
+}
+
 // ---------------------------------------------------------------------------
 // Active window detection
 // ---------------------------------------------------------------------------
@@ -750,6 +781,7 @@ impl LinuxTreeWalker {
             match connect_to_atspi_bus() {
                 Ok(conn) => {
                     inner.a11y_conn = Some(conn);
+                    enable_accessibility(inner.a11y_conn.as_ref().unwrap());
                     inner.initialized = true;
                 }
                 Err(e) => {

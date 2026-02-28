@@ -216,7 +216,14 @@ pub fn update_show_screenpipe_shortcut(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                if let Some(window) = app_handle.get_webview_window("main") {
+                use crate::window_api::main_label_for_mode;
+                use crate::store::SettingsStore;
+                let mode = SettingsStore::get(app_handle)
+                    .unwrap_or_default()
+                    .unwrap_or_default()
+                    .overlay_mode;
+                let label = main_label_for_mode(&mode);
+                if let Some(window) = app_handle.get_webview_window(label) {
                     match window.is_visible() {
                         Ok(true) => hide_main_window(app_handle),
                         _ => show_main_window(app_handle, true),

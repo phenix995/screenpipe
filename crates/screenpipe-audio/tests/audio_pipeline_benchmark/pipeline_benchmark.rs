@@ -293,6 +293,7 @@ async fn pipeline_with_whisper_dataset() {
                     vec![Language::English],
                     &mut whisper_state,
                     &[],
+                    None,
                 )
                 .await
                 {

@@ -100,8 +100,9 @@ npx screenpipe@latest record
 <p align="center">
     <a href="https://docs.screenpi.pe">docs</a> ·
     <a href="https://discord.gg/dU9EBuw7Uq">discord</a> ·
-    <a href="https://twitter.com/screen_pipe">x</a>
-    <a href="https://www.youtube.com/@screen_pipe">youtube</a>
+    <a href="https://twitter.com/screen_pipe">x</a> ·
+    <a href="https://www.youtube.com/@screen_pipe">youtube</a> ·
+    <a href="https://www.reddit.com/r/screen_pipe">reddit</a>
 </p>
 
 <details>

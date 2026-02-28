@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use std::{path::PathBuf, sync::Arc, sync::Mutex as StdMutex};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{debug, error};
 use vad_rs::VadStatus;
 
 use super::{
@@ -20,11 +20,29 @@ pub async fn prepare_segments(
     embedding_manager: Arc<StdMutex<EmbeddingManager>>,
     embedding_extractor: Arc<StdMutex<EmbeddingExtractor>>,
     device: &str,
+    is_output_device: bool,
 ) -> Result<(tokio::sync::mpsc::Receiver<SpeechSegment>, bool, f32)> {
     let audio_data = normalize_v2(audio_data);
 
+    // Silero VAD v5 expects continuous 512-sample chunks at 16kHz (32ms).
+    // On Windows, WASAPI delivers lower audio levels than CoreAudio, so we
+    // must feed Silero at its native frame size to preserve its LSTM temporal
+    // state — using 1600 caused 68ms gaps that broke speech detection.
+    #[cfg(target_os = "windows")]
+    let frame_size = 512;
+    #[cfg(not(target_os = "windows"))]
     let frame_size = 1600;
     let vad_engine = vad_engine.clone();
+
+    // Use a lower speech threshold for output/system audio devices.
+    // System audio (YouTube, Zoom speaker output) often has background music
+    // mixed with speech, reducing Silero's confidence below the default 0.5.
+    if is_output_device {
+        vad_engine
+            .lock()
+            .await
+            .set_speech_threshold(Some(crate::vad::OUTPUT_SPEECH_THRESHOLD));
+    }
 
     let mut noise = 0.;
     let mut audio_frames = Vec::new();
@@ -51,8 +69,13 @@ pub async fn prepare_segments(
         audio_frames.extend(new_chunk);
     }
 
+    // Reset threshold to default after processing
+    if is_output_device {
+        vad_engine.lock().await.set_speech_threshold(None);
+    }
+
     let speech_ratio = speech_frame_count as f32 / total_frames as f32;
-    info!(
+    debug!(
         "device: {}, speech ratio: {}, min_speech_ratio: {}, audio_frames: {}, speech_frames: {}",
         device,
         speech_ratio,

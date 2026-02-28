@@ -95,7 +95,7 @@ pub async fn auto_start_scheduler(state: &SuggestionsState) {
             // Fetch activity & generate suggestions
             match generate_suggestions().await {
                 Ok(cached) => {
-                    info!(
+                    debug!(
                         "suggestions scheduler: generated {} suggestions (mode={}, ai={})",
                         cached.suggestions.len(),
                         cached.mode,
@@ -686,7 +686,7 @@ async fn build_activity_context(
                 used += line.len() + 1;
                 parts.push(line);
             }
-            info!("suggestions: using accessibility data ({} snippets)", snippets.len());
+            debug!("suggestions: using accessibility data ({} snippets)", snippets.len());
         }
     } else {
         let snippets = fetch_ocr_snippets().await;

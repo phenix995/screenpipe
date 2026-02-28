@@ -1,6 +1,6 @@
 [package]
 name = "screenpipe-app"
-version = "2.0.582"
+version = "2.0.610"
 description = "24/7 memory for your desktop. 100% local."
 authors = ["you"]
 license = ""
@@ -175,7 +175,7 @@ pulseaudio = ["screenpipe-audio/pulseaudio"]
 vulkan = ["screenpipe-audio/vulkan"]
 mkl = []
 cargo-clippy = []
-default = ["custom-protocol"]
+default = ["custom-protocol", "qwen3-asr"]
 
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
@@ -190,6 +190,13 @@ enterprise-build = []
 
 # On-device AI via Apple Foundation Models (macOS 26+ / Xcode 26+ only)
 apple-intelligence = ["screenpipe-server/apple-intelligence"]
+
+# Qwen3-ASR speech-to-text engine (ONNX, 0.6B)
+qwen3-asr = ["screenpipe-server/qwen3-asr"]
+
+# GPU execution providers for Qwen3-ASR (ort ONNX Runtime)
+coreml = ["screenpipe-server/coreml"]
+directml = ["screenpipe-server/directml"]
 
 
 [package.metadata.cargo-machete]

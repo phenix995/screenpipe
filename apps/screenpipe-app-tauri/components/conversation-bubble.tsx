@@ -38,6 +38,7 @@ export interface ConversationBubbleProps {
 	isFirstInGroup: boolean;
 	isPlaying: boolean;
 	startOffsetSecs?: number;
+	highlighted?: boolean;
 	onPlay: () => void;
 	onSpeakerAssigned: (newId: number, newName: string) => void;
 	onTimestampClick?: () => void;
@@ -56,6 +57,7 @@ export function ConversationBubble({
 	isFirstInGroup,
 	isPlaying,
 	startOffsetSecs,
+	highlighted,
 	onPlay,
 	onSpeakerAssigned,
 	onTimestampClick,
@@ -74,7 +76,8 @@ export function ConversationBubble({
 					getSpeakerColorClass(speakerId),
 					isFirstInGroup ? "mt-3" : "mt-1",
 					// Brand style: sharp corners, 150ms transitions
-					"animate-in fade-in-0 slide-in-from-bottom-2 duration-150"
+					"animate-in fade-in-0 slide-in-from-bottom-2 duration-150",
+					highlighted && "ring-1 ring-foreground/20 bg-muted/30"
 				)}
 			>
 				{/* Header - only show for first in group */}

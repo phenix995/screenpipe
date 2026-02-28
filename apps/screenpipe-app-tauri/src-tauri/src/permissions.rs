@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 #[allow(unused_imports)] // used on macOS
-use tracing::{info, warn, error};
+use tracing::{debug, info, warn, error};
 
 #[derive(Serialize, Deserialize, Type, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -520,7 +520,7 @@ fn run_self_detached(flag: &str) -> bool {
     }
 
     let _ = Command::new("launchctl").args(["remove", &label]).output();
-    warn!("self detached {} timed out", flag);
+    debug!("self detached {} timed out", flag);
     false
 }
 

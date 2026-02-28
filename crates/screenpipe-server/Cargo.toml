@@ -17,6 +17,7 @@ oasgen = { workspace = true }
 screenpipe-events = { path = "../screenpipe-events" }
 screenpipe-vision = { path = "../screenpipe-vision" }
 screenpipe-audio = { path = "../screenpipe-audio" }
+audiopipe = { git = "https://github.com/screenpipe/audiopipe.git", default-features = false, features = ["qwen3-asr"], optional = true }
 screenpipe-core = { path = "../screenpipe-core", features = ["security", "cloud-sync"] }
 screenpipe-db = { path = "../screenpipe-db" }
 screenpipe-accessibility = { path = "../screenpipe-accessibility", features = ["db"] }
@@ -116,13 +117,16 @@ tokio-tungstenite = "0.24"
 criterion = { workspace = true }
 
 [features]
-default = []
+default = ["qwen3-asr"]
 metal = ["screenpipe-audio/metal"]
 cuda = ["screenpipe-audio/cuda"]
 vulkan = ["screenpipe-audio/vulkan"]
 debug-console = ["console-subscriber"]
 pulseaudio = ["screenpipe-audio/pulseaudio"]
 apple-intelligence = ["dep:screenpipe-apple-intelligence"]
+qwen3-asr = ["screenpipe-audio/qwen3-asr", "dep:audiopipe"]
+coreml = ["screenpipe-audio/coreml"]
+directml = ["screenpipe-audio/directml"]
 
 [[bin]]
 name = "screenpipe"

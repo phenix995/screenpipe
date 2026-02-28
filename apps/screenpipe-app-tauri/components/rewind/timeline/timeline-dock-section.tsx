@@ -280,7 +280,7 @@ export function TimelineIconsSection({
 
   return (
     <>
-      <div className="absolute -top-8 inset-x-0 h-8">
+      <div className="absolute -top-12 inset-x-0 h-12">
         {blocksWithIcons.map((block, i) => {
           const bgColor = stringToColor(block.appName);
 

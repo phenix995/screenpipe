@@ -408,7 +408,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		if (newFramesCount > 0 && !isAtLiveEdge && frames.length > prevFramesLengthRef.current) {
 			// New frames were added at the front, shift our index to compensate
 			setCurrentIndex(prev => prev + newFramesCount);
-			console.log(`Adjusted index by +${newFramesCount} to stay on same frame (live edge: ${isAtLiveEdge})`);
 		}
 		prevFramesLengthRef.current = frames.length;
 
@@ -428,7 +427,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				if (debounceTimer) clearTimeout(debounceTimer);
 				debounceTimer = setTimeout(() => {
 					debounceTimer = null;
-					console.log("Window focused, refreshing timeline...");
 
 					// Pause any active playback
 					pausePlayback();
@@ -503,7 +501,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 								cursor.y >= initialScreenBounds.y + initialScreenBounds.height;
 
 							if (isOutside) {
-								console.log("Cursor left screen, hiding timeline");
 								alreadyHidden = true;
 								pausePlayback();
 								commands.closeWindow("Main");
@@ -529,7 +526,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
 	// Helper to navigate to a timestamp
 	const navigateToTimestamp = useCallback(async (targetTimestamp: string) => {
-		console.log("Navigating to timestamp:", targetTimestamp);
 		const targetDate = new Date(targetTimestamp);
 		if (isNaN(targetDate.getTime())) return;
 
@@ -573,7 +569,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
 		const unlisten = listen<string>("navigate-to-frame", async (event) => {
 			const raw = String(event.payload).trim();
-			console.log("Navigating to frame:", raw);
 			if (!raw) return;
 
 			// Validate frame ID: must be a positive integer
@@ -651,7 +646,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				isSameDay(new Date(frame.timestamp), targetDate)
 			);
 			if (isSameDay(targetDate, currentDate) && hasFramesForTargetDate) {
-				console.log("[pendingNavigation] Frames loaded for target date, jumping to closest frame:", targetDate.toISOString());
 
 				// Find the closest frame to the target timestamp — only consider
 				// frames from the target date (old-date frames may still be in
@@ -676,7 +670,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				setCurrentFrame(frames[snapped]);
 				// Use HTTP JPEG fallback for this first frame (skip slow video seek)
 				setSearchNavFrame(true);
-				console.log("[pendingNavigation] Jumped to frame index:", snapped);
 
 				// Clear pending navigation and UI state
 				pendingNavigationRef.current = null;
@@ -1334,8 +1327,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 			return;
 		}
 
-		console.log(`[jumpToTime] Jumping to index ${closestIndex}, diff=${Math.round(closestDiff / 1000)}s from target`);
-
 		// Update cursor position, snap to matching device
 		const snapped = snapToDevice(closestIndex);
 		setCurrentIndex(snapped);
@@ -1349,8 +1340,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 	const navigateDirectToDate = (targetDate: Date) => {
 		isNavigatingRef.current = true;
 		setIsNavigating(true);
-
-		console.log("[navigateDirectToDate] called with:", targetDate.toISOString());
 
 		dateChangesRef.current += 1;
 		posthog.capture("timeline_date_changed", {
@@ -1375,8 +1364,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		// Don't clear currentFrame — keep old frame visible while new ones load
 		setCurrentIndex(0);
 		setCurrentDate(targetDate);
-
-		console.log("[navigateDirectToDate] Navigation initiated, narrow fetch sent");
 
 		// Timeout: if frames haven't arrived after 10s, retry with full-day fetch
 		// instead of giving up entirely
@@ -1415,8 +1402,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		// Show loading feedback IMMEDIATELY (before any HTTP calls)
 		setSeekingTimestamp(newDate.toISOString());
 
-		console.log("[handleDateChange] called with:", newDate.toISOString(), "currentDate:", currentDate.toISOString());
-
 		try {
 			// For today, skip any HTTP checks — hot cache guarantees frames
 			const isToday = isSameDay(newDate, new Date());
@@ -1430,7 +1415,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				const nearest = await findNearestDateWithFrames(newDate, direction, MAX_DATE_RETRIES);
 
 				if (!nearest) {
-					console.log("[handleDateChange] No frames found within", MAX_DATE_RETRIES, "days", direction);
 					isNavigatingRef.current = false;
 					setIsNavigating(false);
 					setSeekingTimestamp(null);
@@ -1438,12 +1422,10 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 				}
 
 				targetDate = nearest;
-				console.log("[handleDateChange] Nearest date with frames:", targetDate.toISOString());
 			}
 
 			// Already on this day - jump to first frame of the day
 			if (isSameDay(targetDate, currentDate)) {
-				console.log("[handleDateChange] Same day, jumping to first frame of day");
 				const targetDayStart = startOfDay(targetDate);
 				const targetDayEnd = endOfDay(targetDate);
 				const targetIndex = frames.findIndex((frame) => {
@@ -1463,7 +1445,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 
 			// Don't go before start date
 			if (isAfter(startAndEndDates.start, targetDate)) {
-				console.log("[handleDateChange] Before start date, stopping");
 				isNavigatingRef.current = false;
 				setIsNavigating(false);
 				setSeekingTimestamp(null);
@@ -1495,7 +1476,6 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 			// DON'T try to find frames here - they won't be loaded yet!
 			// The pending navigation effect handles jumping to the
 			// correct frame once the new date's frames arrive via WebSocket.
-			console.log("[handleDateChange] Navigation initiated, waiting for frames to load...");
 
 			// Safety timeout: clear navigation state if frames don't arrive within 10s
 			setTimeout(() => {

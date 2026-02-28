@@ -8,7 +8,7 @@ use crate::tray::QUIT_REQUESTED;
 use crate::RecordingState;
 use anyhow::Error;
 use dark_light::Mode;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use serde_json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -161,7 +161,7 @@ impl UpdatesManager {
 
         // Handle source/community builds
         if is_source_build(&self.app) {
-            info!("source build detected, auto-updates not available");
+            debug!("source build detected, auto-updates not available");
             if show_dialog {
                 self.show_source_build_dialog().await?;
             }

@@ -170,34 +170,59 @@ async fn kill_process_on_port(port: u16) {
 
     #[cfg(unix)]
     {
-        match tokio::process::Command::new("lsof")
+        // lsof can hang indefinitely on macOS — always enforce a timeout
+        // and kill the child if it exceeds it, to avoid zombie lsof processes.
+        let child = match tokio::process::Command::new("lsof")
             .args(["-ti", &format!(":{}", port)])
-            .output()
-            .await
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
         {
-            Ok(output) if output.status.success() => {
-                let pids = String::from_utf8_lossy(&output.stdout);
-                let pids: Vec<&str> = pids
-                    .trim()
-                    .split('\n')
-                    .filter(|s| !s.is_empty() && *s != my_pid)
-                    .collect();
-                if pids.is_empty() {
-                    return;
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let child_id = child.id();
+        let output = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            child.wait_with_output(),
+        )
+        .await
+        {
+            Ok(Ok(o)) => o,
+            _ => {
+                // Kill the hung lsof process by pid
+                if let Some(pid) = child_id {
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output();
                 }
-                tracing::warn!(
-                    "found {} orphaned process(es) on port {}: {:?}, killing (our pid: {})",
-                    pids.len(), port, pids, my_pid
-                );
-                for pid in &pids {
-                    let _ = tokio::process::Command::new("kill")
-                        .args(["-9", pid])
-                        .output()
-                        .await;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tracing::warn!("lsof timed out checking port {}, killed", port);
+                return;
             }
-            _ => {}
+        };
+
+        if output.status.success() {
+            let pids_str = String::from_utf8_lossy(&output.stdout);
+            let pids: Vec<&str> = pids_str
+                .trim()
+                .split('\n')
+                .filter(|s| !s.is_empty() && *s != my_pid)
+                .collect();
+            if pids.is_empty() {
+                return;
+            }
+            tracing::warn!(
+                "found {} orphaned process(es) on port {}: {:?}, killing (our pid: {})",
+                pids.len(), port, pids, my_pid
+            );
+            for pid in &pids {
+                let _ = tokio::process::Command::new("kill")
+                    .args(["-9", pid])
+                    .output()
+                    .await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
 

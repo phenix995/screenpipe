@@ -27,10 +27,10 @@ export function FeedbackSection() {
     <div className="space-y-5">
       <div className="space-y-1">
         <h1 className="text-xl font-bold tracking-tight text-foreground">
-          help
+          Help
         </h1>
         <p className="text-muted-foreground text-sm">
-          get support, send logs, or suggest features
+          Get support, send logs, or suggest features
         </p>
       </div>
 
@@ -40,7 +40,7 @@ export function FeedbackSection() {
           <div className="flex items-center gap-2.5 mb-2.5">
             <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
             <div>
-              <h3 className="text-sm font-medium text-foreground">send logs</h3>
+              <h3 className="text-sm font-medium text-foreground">Send logs</h3>
               <p className="text-xs text-muted-foreground">logs are included automatically</p>
             </div>
           </div>
@@ -52,7 +52,7 @@ export function FeedbackSection() {
             <div className="flex items-center gap-2.5">
               <Lightbulb className="h-4 w-4 text-muted-foreground shrink-0" />
               <div>
-                <h3 className="text-sm font-medium text-foreground">feature ideas</h3>
+                <h3 className="text-sm font-medium text-foreground">Feature ideas</h3>
                 <p className="text-xs text-muted-foreground">vote or submit requests</p>
               </div>
             </div>
@@ -70,7 +70,7 @@ export function FeedbackSection() {
             <div className="flex items-center gap-2.5">
               <Github className="h-4 w-4 text-muted-foreground shrink-0" />
               <div>
-                <h3 className="text-sm font-medium text-foreground">github issues</h3>
+                <h3 className="text-sm font-medium text-foreground">GitHub issues</h3>
                 <p className="text-xs text-muted-foreground">bugs & technical issues</p>
               </div>
             </div>
@@ -92,7 +92,7 @@ export function FeedbackSection() {
         >
           <div className="flex items-center gap-2.5">
             <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-sm font-medium text-foreground">live chat with us</span>
+            <span className="text-sm font-medium text-foreground">Live chat with us</span>
           </div>
           {chatExpanded ? (
             <ChevronUp className="h-4 w-4 text-muted-foreground" />

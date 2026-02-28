@@ -489,9 +489,9 @@ async deleteCloudData() : Promise<Result<null, string>> {
 /**
  * Get Pi info
  */
-async piInfo() : Promise<Result<PiInfo, string>> {
+async piInfo(sessionId: string | null) : Promise<Result<PiInfo, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pi_info") };
+    return { status: "ok", data: await TAURI_INVOKE("pi_info", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -500,9 +500,9 @@ async piInfo() : Promise<Result<PiInfo, string>> {
 /**
  * Start the Pi sidecar in RPC mode (Tauri command wrapper)
  */
-async piStart(projectDir: string, userToken: string | null, providerConfig: PiProviderConfig | null) : Promise<Result<PiInfo, string>> {
+async piStart(sessionId: string | null, projectDir: string, userToken: string | null, providerConfig: PiProviderConfig | null) : Promise<Result<PiInfo, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pi_start", { projectDir, userToken, providerConfig }) };
+    return { status: "ok", data: await TAURI_INVOKE("pi_start", { sessionId, projectDir, userToken, providerConfig }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -511,9 +511,9 @@ async piStart(projectDir: string, userToken: string | null, providerConfig: PiPr
 /**
  * Stop the Pi sidecar
  */
-async piStop() : Promise<Result<PiInfo, string>> {
+async piStop(sessionId: string | null) : Promise<Result<PiInfo, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pi_stop") };
+    return { status: "ok", data: await TAURI_INVOKE("pi_stop", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -544,9 +544,9 @@ async piInstall() : Promise<Result<null, string>> {
 /**
  * Send a prompt to Pi, optionally with images
  */
-async piPrompt(message: string, images: PiImageContent[] | null) : Promise<Result<null, string>> {
+async piPrompt(sessionId: string | null, message: string, images: PiImageContent[] | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pi_prompt", { message, images }) };
+    return { status: "ok", data: await TAURI_INVOKE("pi_prompt", { sessionId, message, images }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -555,9 +555,9 @@ async piPrompt(message: string, images: PiImageContent[] | null) : Promise<Resul
 /**
  * Abort current Pi operation
  */
-async piAbort() : Promise<Result<null, string>> {
+async piAbort(sessionId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pi_abort") };
+    return { status: "ok", data: await TAURI_INVOKE("pi_abort", { sessionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -566,9 +566,21 @@ async piAbort() : Promise<Result<null, string>> {
 /**
  * Start a new Pi session (clears conversation history)
  */
-async piNewSession() : Promise<Result<null, string>> {
+async piNewSession(sessionId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("pi_new_session") };
+    return { status: "ok", data: await TAURI_INVOKE("pi_new_session", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Update Pi config files (models.json / auth.json) without restarting the process.
+ * Call this when the user changes preset — Pi picks up the new config on next prompt.
+ */
+async piUpdateConfig(userToken: string | null, providerConfig: PiProviderConfig | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pi_update_config", { userToken, providerConfig }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

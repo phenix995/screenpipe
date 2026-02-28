@@ -144,7 +144,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 					error: null,
 				});
 				
-				console.log(`Loaded ${cached.frames.length} frames from cache (isToday: ${isToday})`);
 			}
 		} catch (error) {
 			console.warn("Failed to load from cache:", error);
@@ -378,11 +377,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 				loadingProgress: { loaded: currentFrames.length, isStreaming: true },
 				isConnected: true,
 			});
-			if (hasLoggedTimelineDisconnect) {
-				console.log("timeline WebSocket reconnected");
-			} else {
-				console.log("timeline WebSocket connected");
-			}
 			hasLoggedTimelineDisconnect = false;
 
 			// After successful connection/reconnection, trigger a fetch for current date
@@ -527,7 +521,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 		ws.onclose = () => {
 			// Ignore events from old WebSocket instances (e.g., when refresh button is clicked)
 			if (thisWsId !== currentWsId) {
-				console.log("Ignoring onclose from old WebSocket instance");
 				return;
 			}
 
@@ -575,12 +568,10 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 		const requestKey = `${startTime.toISOString()}_${endTime.toISOString()}`;
 
 		if (sentRequests.has(requestKey)) {
-			console.log("Request already sent, skipping...");
 			return;
 		}
 
 		if (websocket && websocket.readyState === WebSocket.OPEN) {
-			console.log("sending request for", requestKey);
 			websocket.send(
 				JSON.stringify({
 					start_time: startTime.toISOString(),
@@ -604,7 +595,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 				// Retry if no frames arrived (or still waiting for date swap to complete)
 				if ((currentFrames.length === 0 || stillSwapping) && requestRetryCount < MAX_REQUEST_RETRIES) {
 					requestRetryCount++;
-					console.log(`No frames received, retrying (${requestRetryCount}/${MAX_REQUEST_RETRIES})...`);
 
 					// Clear this date from sentRequests to allow retry
 					set((state) => {
@@ -616,7 +606,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 					// Retry the request
 					get().fetchTimeRange(startTime, endTime);
 				} else if ((currentFrames.length === 0 || stillSwapping) && requestRetryCount >= MAX_REQUEST_RETRIES) {
-					console.log("Max retries reached, no frames available");
 					set({
 						isLoading: false,
 						message: "No data available for this time range"
@@ -644,7 +633,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 		const requestKey = `${nextDay.toISOString()}_${endTime.toISOString()}`;
 
 		if (sentRequests.has(requestKey)) {
-			console.log("Request already sent, skipping...");
 			return;
 		}
 
@@ -693,8 +681,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 			};
 		});
 
-		console.log("Window focused, cleared sentRequests for:", todayStr);
-
 		// If WebSocket is open, fetch today's data
 		if (websocket && websocket.readyState === WebSocket.OPEN) {
 			const startTime = new Date(today);
@@ -704,7 +690,6 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 			fetchTimeRange(startTime, endTime);
 		} else {
 			// WebSocket is closed, reconnect (which will fetch on open)
-			console.log("WebSocket not open, reconnecting...");
 			connectWebSocket();
 		}
 	},

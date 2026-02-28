@@ -489,7 +489,7 @@ impl TreeWalkerMetrics {
             let avg_nodes = self.total_nodes / self.walks_total.max(1);
             let truncation_rate = self.walks_truncated as f64 / self.walks_total as f64;
             let truncation_pct = (truncation_rate * 100.0) as u64;
-            info!(
+            debug!(
                 "tree walker stats (last 60s): walks={}, stored={}, deduped={}, empty={}, errors={}, immediate={}, avg_walk={}ms, max_walk={}ms, total_chars={}, avg_nodes={}, max_depth={}, truncated={}% ({} timeout, {} max_nodes)",
                 self.walks_total, self.walks_stored, self.walks_deduped,
                 self.walks_empty, self.walks_error, self.walks_immediate,

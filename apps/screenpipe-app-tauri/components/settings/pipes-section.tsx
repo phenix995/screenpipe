@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSettings } from "@/lib/hooks/use-settings";
+import { AIPresetsSelector } from "@/components/rewind/ai-presets-selector";
 import { useTeam } from "@/lib/hooks/use-team";
 import { useToast } from "@/components/ui/use-toast";
 import { UpgradeDialog } from "@/components/upgrade-dialog";
@@ -666,7 +667,7 @@ export function PipesSection() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-medium">pipes</h3>
+          <h3 className="text-lg font-medium">Pipes</h3>
           <p className="text-sm text-muted-foreground">
             scheduled agents that run on your screen data
             {" · "}
@@ -981,10 +982,12 @@ export function PipesSection() {
                   <div className="mt-4 space-y-4 border-t pt-4">
                     <div>
                       <Label className="text-xs">ai preset</Label>
-                      <select
-                        value={pipe.config.preset || ""}
-                        onChange={(e) => {
-                          const val = e.target.value;
+                      <AIPresetsSelector
+                        compact
+                        allowNone
+                        controlledPresetId={pipe.config.preset || null}
+                        onControlledSelect={(presetId) => {
+                          const val = presetId || "";
                           const pipeName = pipe.config.name;
                           // Optimistic update — reflect immediately in UI
                           setPipes((prev) =>
@@ -1007,16 +1010,7 @@ export function PipesSection() {
                           });
                           pendingConfigSaves.current[pipeName] = savePromise;
                         }}
-                        className="w-full h-8 text-xs border rounded px-2 bg-background"
-                      >
-                        <option value="">none (use pipe defaults)</option>
-                        {(settings.aiPresets || []).map((p: any) => (
-                          <option key={p.id} value={p.id}>
-                            {p.id} — {p.model} ({p.provider})
-                            {p.defaultPreset ? " ★" : ""}
-                          </option>
-                        ))}
-                      </select>
+                      />
                       <p className="text-[11px] text-muted-foreground mt-1">
                         uses model & provider from your ai settings preset
                       </p>

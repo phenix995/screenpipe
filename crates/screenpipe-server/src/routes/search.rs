@@ -21,7 +21,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::analytics;
 use crate::server::AppState;
@@ -127,8 +127,8 @@ pub(crate) async fn search(
     Query(query): Query<SearchQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Result<JsonResponse<SearchResponse>, (StatusCode, JsonResponse<serde_json::Value>)> {
-    info!(
-        "received search request: query='{}', content_type={:?}, limit={}, offset={}, start_time={:?}, end_time={:?}, app_name={:?}, window_name={:?}, min_length={:?}, max_length={:?}, speaker_ids={:?}, frame_name={:?}, browser_url={:?}, focused={:?}, speaker_name={:?}",
+    debug!(
+        "received search request: query='{}', content_type={:?}, limit={}, offset={}, start_time={:?}, end_time={:?}, app_name={:?}, window_name={:?}, min_length={:?}, max_length={:?}, speaker_ids={:?}, frame_name={:?}, browser_url={:?}, focused={:?}",
         query.q.as_deref().unwrap_or(""),
         query.content_type,
         query.pagination.limit,
@@ -143,7 +143,6 @@ pub(crate) async fn search(
         query.frame_name,
         query.browser_url,
         query.focused,
-        query.speaker_name,
     );
 
     // Check cache first (only for queries without frame extraction)
@@ -308,7 +307,7 @@ pub(crate) async fn search(
         }
     }
 
-    info!("search completed: found {} results", total);
+    debug!("search completed: found {} results", total);
 
     // Track search analytics
     analytics::capture_event_nonblocking(

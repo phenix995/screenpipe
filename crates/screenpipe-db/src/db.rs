@@ -539,6 +539,22 @@ impl DatabaseManager {
         Ok(rows)
     }
 
+    /// Delete an audio chunk and its transcriptions (cascade via FK).
+    /// Used by batch reconciliation to merge multiple 30s chunks into one.
+    pub async fn delete_audio_chunk(&self, chunk_id: i64) -> Result<(), sqlx::Error> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+        sqlx::query("DELETE FROM audio_transcriptions WHERE audio_chunk_id = ?1")
+            .bind(chunk_id)
+            .execute(&mut **tx.conn())
+            .await?;
+        sqlx::query("DELETE FROM audio_chunks WHERE id = ?1")
+            .bind(chunk_id)
+            .execute(&mut **tx.conn())
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn count_audio_transcriptions(
         &self,
         audio_chunk_id: i64,
@@ -767,8 +783,11 @@ impl DatabaseManager {
         device: &str,
         is_input_device: bool,
         timestamp: DateTime<Utc>,
+        duration_secs: Option<f64>,
     ) -> Result<(), sqlx::Error> {
         let text_length = transcription.len() as i64;
+        let start_time: f64 = 0.0;
+        let end_time: f64 = duration_secs.unwrap_or(0.0);
         let mut tx = self.begin_immediate_with_retry().await?;
 
         sqlx::query("DELETE FROM audio_transcriptions WHERE audio_chunk_id = ?1")
@@ -777,8 +796,8 @@ impl DatabaseManager {
             .await?;
 
         sqlx::query(
-            "INSERT INTO audio_transcriptions (audio_chunk_id, transcription, text_length, offset_index, timestamp, transcription_engine, device, is_input_device)
-             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
+            "INSERT INTO audio_transcriptions (audio_chunk_id, transcription, text_length, offset_index, timestamp, transcription_engine, device, is_input_device, start_time, end_time)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8, ?9)",
         )
         .bind(audio_chunk_id)
         .bind(transcription)
@@ -787,6 +806,8 @@ impl DatabaseManager {
         .bind(engine)
         .bind(device)
         .bind(is_input_device)
+        .bind(start_time)
+        .bind(end_time)
         .execute(&mut **tx.conn())
         .await?;
 
@@ -814,6 +835,34 @@ impl DatabaseManager {
         .bind(end)
         .fetch_all(&self.pool)
         .await?;
+        Ok(rows)
+    }
+
+    /// Get audio chunks by explicit IDs (used by re-transcribe when frontend sends chunk IDs).
+    pub async fn get_audio_chunks_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<AudioChunkInfo>, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        // Build placeholder list: (?1, ?2, ?3, ...)
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!(
+            r#"SELECT ac.id, ac.file_path, at.transcription, at.transcription_engine,
+                      at.offset_index, COALESCE(at.timestamp, ac.timestamp) as timestamp,
+                      at.device, at.is_input_device
+               FROM audio_chunks ac
+               LEFT JOIN audio_transcriptions at ON ac.id = at.audio_chunk_id
+               WHERE ac.id IN ({})
+               ORDER BY ac.timestamp ASC"#,
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query_as::<_, AudioChunkInfo>(&sql);
+        for id in ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(&self.pool).await?;
         Ok(rows)
     }
 
@@ -3917,7 +3966,7 @@ impl DatabaseManager {
                 crate::text_normalizer::sanitize_fts5_query(query)
             };
             conditions.push(
-                "f.id IN (SELECT frame_id FROM ocr_text_fts WHERE text MATCH ? ORDER BY rank LIMIT 5000)",
+                "(f.id IN (SELECT frame_id FROM ocr_text_fts WHERE text MATCH ? ORDER BY rank LIMIT 5000) OR f.id IN (SELECT id FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000))",
             );
             fts_match
         } else {
@@ -3962,16 +4011,16 @@ SELECT id, timestamp, url, app_name, window_name, ocr_text, text_json FROM (
         f.id,
         f.timestamp,
         f.browser_url as url,
-        COALESCE(f.app_name, o.app_name) as app_name,
-        COALESCE(f.window_name, o.window_name) as window_name,
-        o.text as ocr_text,
+        COALESCE(f.app_name, o.app_name, '') as app_name,
+        COALESCE(f.window_name, o.window_name, '') as window_name,
+        COALESCE(o.text, f.accessibility_text, '') as ocr_text,
         o.text_json,
         ROW_NUMBER() OVER (
-            PARTITION BY COALESCE(f.app_name, o.app_name)
+            PARTITION BY COALESCE(f.app_name, o.app_name, '')
             ORDER BY f.timestamp {order_dir}, {relevance} DESC
         ) as app_rn
     FROM frames f
-    INNER JOIN ocr_text o ON f.id = o.frame_id
+    LEFT JOIN ocr_text o ON f.id = o.frame_id
     WHERE {where_clause}
 )
 WHERE app_rn <= {cap}
@@ -3992,10 +4041,10 @@ SELECT
     f.browser_url as url,
     COALESCE(f.app_name, o.app_name) as app_name,
     COALESCE(f.window_name, o.window_name) as window_name,
-    o.text as ocr_text,
+    COALESCE(o.text, f.accessibility_text, '') as ocr_text,
     o.text_json
 FROM frames f
-INNER JOIN ocr_text o ON f.id = o.frame_id
+LEFT JOIN ocr_text o ON f.id = o.frame_id
 WHERE {}
 ORDER BY f.timestamp {}, {} DESC
 LIMIT ? OFFSET ?
@@ -4023,8 +4072,9 @@ LIMIT ? OFFSET ?
             }
         }
 
-        // Bind search condition if query is not empty
+        // Bind search condition if query is not empty (twice: once for ocr_text_fts, once for frames_fts)
         if !query.is_empty() {
+            query_builder = query_builder.bind(&search_condition);
             query_builder = query_builder.bind(&search_condition);
         }
 
@@ -4101,7 +4151,7 @@ LIMIT ? OFFSET ?
                 crate::text_normalizer::sanitize_fts5_query(query)
             };
             conditions.push(
-                "f.id IN (SELECT frame_id FROM ocr_text_fts WHERE text MATCH ? ORDER BY rank LIMIT 5000)",
+                "(f.id IN (SELECT frame_id FROM ocr_text_fts WHERE text MATCH ? ORDER BY rank LIMIT 5000) OR f.id IN (SELECT id FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000))",
             );
             fts_match
         } else {
@@ -4180,6 +4230,7 @@ LIMIT ? OFFSET ?
         }
 
         if !query.is_empty() {
+            query_builder = query_builder.bind(&search_condition);
             query_builder = query_builder.bind(&search_condition);
         }
 

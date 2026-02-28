@@ -68,6 +68,10 @@ const BASE_TOOLS: Tool[] = [
       "Returns timestamped results with app context. " +
       "Call with no parameters to get recent activity. " +
       "Use the 'screenpipe://context' resource for current time when building time-based queries.\n\n" +
+      "SEARCH STRATEGY: First search with ONLY time params (start_time/end_time) — no q, no app_name, no content_type. " +
+      "This gives ground truth of what's recorded. Scan results to find correct app_name values, then narrow with filters using exact observed values. " +
+      "App names are case-sensitive and may differ from user input (e.g. 'Discord' vs 'Discord.exe'). " +
+      "The q param searches captured text (accessibility/OCR), NOT app names. NEVER report 'no data' after one filtered search — verify with unfiltered time-only search first.\n\n" +
       "DEEP LINKS: When referencing specific moments, create clickable links using IDs from search results:\n" +
       "- OCR results (PREFERRED): [10:30 AM — Chrome](screenpipe://frame/12345) — use content.frame_id from the result\n" +
       "- Audio results: [meeting at 3pm](screenpipe://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from result\n" +
@@ -312,6 +316,13 @@ Screenpipe captures four types of data:
 | end_time | ISO 8601 UTC | (no filter) |
 | app_name | Filter by app | (no filter) |
 | include_frames | Include screenshots | false |
+
+## Search Strategy (MANDATORY)
+1. First search: ONLY use time params (start_time/end_time). No q, no app_name, no content_type. This gives ground truth of what's recorded.
+2. Scan results to find correct app_name values and content patterns.
+3. Only THEN narrow with filters using exact observed values. App names are case-sensitive and may differ from user input (e.g. "Discord" vs "Discord.exe").
+4. The q param searches captured text (accessibility/OCR), NOT app names — an app can be visible without its name in the captured text.
+5. NEVER report "no data found" after one filtered search. Verify with unfiltered time-only search first.
 
 ## Tips
 1. Read screenpipe://context first to get current timestamps

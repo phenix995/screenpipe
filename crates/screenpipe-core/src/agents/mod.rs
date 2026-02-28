@@ -97,4 +97,10 @@ pub trait AgentExecutor: Send + Sync {
 
     /// Human-readable agent name, e.g. `"pi"`, `"claude-code"`.
     fn name(&self) -> &str;
+
+    /// Optional cloud auth token for screenpipe provider proxy.
+    /// Defaults to `None`; override in agents that support cloud auth.
+    fn user_token(&self) -> Option<&str> {
+        None
+    }
 }

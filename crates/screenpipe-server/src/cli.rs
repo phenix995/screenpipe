@@ -24,6 +24,8 @@ pub enum CliAudioTranscriptionEngine {
     WhisperLargeV3Turbo,
     #[clap(name = "whisper-large-v3-turbo-quantized")]
     WhisperLargeV3TurboQuantized,
+    #[clap(name = "qwen3-asr")]
+    Qwen3Asr,
     /// Disable transcription (audio capture only, no speech-to-text)
     #[clap(name = "disabled")]
     Disabled,
@@ -49,6 +51,7 @@ impl From<CliAudioTranscriptionEngine> for CoreAudioTranscriptionEngine {
             CliAudioTranscriptionEngine::WhisperLargeV3TurboQuantized => {
                 CoreAudioTranscriptionEngine::WhisperLargeV3TurboQuantized
             }
+            CliAudioTranscriptionEngine::Qwen3Asr => CoreAudioTranscriptionEngine::Qwen3Asr,
             CliAudioTranscriptionEngine::Disabled => CoreAudioTranscriptionEngine::Disabled,
         }
     }

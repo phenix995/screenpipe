@@ -212,7 +212,7 @@ export function AIPanel({
 	const handleClose = async () => {
 		// Abort any ongoing Pi request
 		if (piStreamingRef.current) {
-			try { await commands.piAbort(); } catch {}
+			try { await commands.piAbort("chat"); } catch {}
 			piStreamingRef.current = false;
 		}
 		if (abortControllerRef.current) {
@@ -284,10 +284,12 @@ export function AIPanel({
 	useEffect(() => {
 		let unlisten: UnlistenFn | null = null;
 		const setup = async () => {
-			unlisten = await listen<PiEvent>("pi_event", (event) => {
+			unlisten = await listen<any>("pi_event", (event) => {
 				if (!piStreamingRef.current) return;
+				const { sessionId, event: piEvent } = event.payload;
+				if (sessionId !== "chat") return;
 
-				const newState = reducePiEvent(piMessageStateRef.current, event.payload);
+				const newState = reducePiEvent(piMessageStateRef.current, piEvent);
 				piMessageStateRef.current = newState;
 				const content = formatPiMessage(newState);
 
@@ -309,7 +311,7 @@ export function AIPanel({
 
 	const handleStopStreaming = async () => {
 		try {
-			await commands.piAbort();
+			await commands.piAbort("chat");
 		} catch (e) {
 			console.warn("Failed to abort Pi:", e);
 		}
@@ -416,7 +418,7 @@ Please analyze the data in context of this question.`;
 				{ id: generateId(), role: "assistant", content: "Processing..." },
 			]);
 
-			const result = await commands.piPrompt(prompt, null);
+			const result = await commands.piPrompt("chat", prompt, null);
 			if (result.status === "error") {
 				piStreamingRef.current = false;
 				setChatMessages((prev) => [

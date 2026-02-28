@@ -81,6 +81,7 @@ ort-sys = "=2.0.0-rc.6"
 knf-rs = { git = "https://github.com/Neptune650/knf-rs.git" }
 futures = "0.3.31"
 deepgram = "0.6.4"
+audiopipe = { git = "https://github.com/screenpipe/audiopipe.git", default-features = false, features = ["qwen3-asr"], optional = true }
 bytes = { version = "1.9.0", features = ["serde"] }
 rand = "0.9.0"
 
@@ -117,6 +118,9 @@ metal = ["whisper-rs/metal"]
 cuda = ["whisper-rs/cuda"]
 vulkan = ["whisper-rs/vulkan"]
 pulseaudio = ["dep:libpulse-binding", "dep:libpulse-simple-binding"]
+qwen3-asr = ["dep:audiopipe"]
+coreml = ["audiopipe/coreml"]
+directml = ["audiopipe/directml"]
 
 [[example]]
 name = "screenpipe-audio"

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::ManagerExt;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::WebviewWindowExt;
 
@@ -198,6 +198,74 @@ pub fn clear_frontmost_app() {
             let app: id = ptr as id;
             let _: () = msg_send![app, release];
         }
+    }
+}
+
+/// Check if our own app (screenpipe) is still the active macOS application.
+/// When the overlay panel loses focus to another screenpipe window (Settings,
+/// Chat, Search), NSApp.isActive remains true. When focus goes to an external
+/// app, it becomes false. This lets us decide whether to restore the previous
+/// frontmost app or just clear it.
+#[cfg(target_os = "macos")]
+fn is_own_app_still_active() -> bool {
+    use objc::{msg_send, sel, sel_impl};
+    use tauri_nspanel::cocoa::base::id;
+    unsafe {
+        let ns_app: id = msg_send![objc::class!(NSApplication), sharedApplication];
+        let active: bool = msg_send![ns_app, isActive];
+        active
+    }
+}
+
+/// Conditionally restore or clear the saved frontmost app.
+/// If our own app is still active (focus moved to another screenpipe window
+/// like Settings), we just clear without restoring — otherwise Settings/Chat
+/// would lose keyboard focus. If the app is no longer active (focus went to
+/// an external app like Chrome), we restore as normal.
+#[cfg(target_os = "macos")]
+fn restore_frontmost_app_if_external() {
+    if is_own_app_still_active() {
+        info!("Focus moved to another screenpipe window, clearing saved app without restoring");
+        clear_frontmost_app();
+    } else {
+        restore_frontmost_app();
+    }
+}
+
+/// Find the WKWebView inside a regular NSWindow and make it first responder.
+/// Similar to `make_webview_first_responder` (for NSPanel) but works with
+/// a raw NSWindow pointer. This ensures keyboard input reaches the webview
+/// when re-showing an existing window.
+#[cfg(target_os = "macos")]
+pub unsafe fn make_nswindow_webview_first_responder(ns_win: tauri_nspanel::cocoa::base::id) {
+    use objc::{class, msg_send, sel, sel_impl};
+    use tauri_nspanel::cocoa::base::{id, nil};
+    use tauri_nspanel::cocoa::foundation::NSArray;
+
+    let content_view: id = msg_send![ns_win, contentView];
+    let wk_class: *const objc::runtime::Class = class!(WKWebView);
+
+    // BFS through subview tree to find WKWebView
+    let mut wk_view: id = nil;
+    let mut queue: Vec<id> = vec![content_view];
+    while let Some(view) = queue.pop() {
+        let is_wk: bool = msg_send![view, isKindOfClass: wk_class];
+        if is_wk {
+            wk_view = view;
+            break;
+        }
+        let subviews: id = msg_send![view, subviews];
+        if subviews != nil {
+            let count: u64 = NSArray::count(subviews);
+            for i in 0..count {
+                let child: id = NSArray::objectAtIndex(subviews, i);
+                queue.push(child);
+            }
+        }
+    }
+
+    if wk_view != nil {
+        let _: () = msg_send![ns_win, makeFirstResponder: wk_view];
     }
 }
 
@@ -835,6 +903,11 @@ impl ShowRewindWindow {
                             // Bring window to front and make it key
                             let _: () = msg_send![ns_win as cocoa_id, makeKeyAndOrderFront: cocoa_nil];
 
+                            // Set WKWebView as first responder so keyboard input works.
+                            // Without this, re-showing an existing Settings window may
+                            // leave the content_view as first responder (tao#208).
+                            make_nswindow_webview_first_responder(ns_win as cocoa_id);
+
                             // Remove MoveToActiveSpace so the window stays pinned to this space
                             let _: () = msg_send![ns_win as cocoa_id, setCollectionBehavior: behavior];
                         }
@@ -902,7 +975,7 @@ impl ShowRewindWindow {
             return Ok(window);
         }
 
-        info!("showing window: {:?} (not found)", id.label());
+        debug!("showing window: {:?} (not found)", id.label());
 
 
         let window = match self {
@@ -1041,8 +1114,12 @@ impl ShowRewindWindow {
                                         if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                                             return;
                                         }
+                                        // Use conditional restore: if focus moved to another
+                                        // screenpipe window (Settings, Chat), just clear the
+                                        // saved app. Only activate the previous external app
+                                        // if our app is no longer active.
                                         #[cfg(target_os = "macos")]
-                                        restore_frontmost_app();
+                                        restore_frontmost_app_if_external();
                                         // order_out removes the invisible panel from
                                         // the screen so it can't receive stray clicks.
                                         #[cfg(target_os = "macos")]
@@ -1337,8 +1414,12 @@ impl ShowRewindWindow {
                                         return;
                                     }
                                     info!("Main window hiding after debounce");
+                                    // Use conditional restore: if focus moved to another
+                                    // screenpipe window (Settings, Chat), just clear the
+                                    // saved app. Only activate the previous external app
+                                    // if our app is no longer active.
                                     #[cfg(target_os = "macos")]
-                                    restore_frontmost_app();
+                                    restore_frontmost_app_if_external();
                                     // order_out removes the invisible panel so it
                                     // can't receive stray clicks at alpha=0.
                                     #[cfg(target_os = "macos")]

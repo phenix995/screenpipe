@@ -999,6 +999,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   <SelectItem value="whisper-large-quantized">Whisper Large V3 Quantized{hwCapability?.recommendedEngine === "whisper-large-quantized" && " (recommended)"}</SelectItem>
                   <SelectItem value="whisper-large-v3-turbo">Whisper Large V3 Turbo{hwCapability?.recommendedEngine === "whisper-large-v3-turbo" && " (recommended)"}</SelectItem>
                   <SelectItem value="whisper-large-v3-turbo-quantized">Whisper Large V3 Turbo Quantized{hwCapability?.recommendedEngine === "whisper-large-v3-turbo-quantized" && " (recommended)"}</SelectItem>
+                  <SelectItem value="qwen3-asr">Qwen3-ASR (0.6B, ONNX)</SelectItem>
                   <SelectItem value="deepgram">Deepgram</SelectItem>
                   <SelectItem value="disabled">Disabled (capture only)</SelectItem>
                 </SelectContent>
@@ -1037,9 +1038,8 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         </Card>
         )}
 
-        {/* Transcription Mode - only for local Whisper engines */}
-        {!settings.disableAudio && settings.audioTranscriptionEngine !== "deepgram" &&
-         settings.audioTranscriptionEngine !== "screenpipe-cloud" &&
+        {/* Transcription Mode - available for all engines except disabled */}
+        {!settings.disableAudio &&
          settings.audioTranscriptionEngine !== "disabled" && (
           <Card className="border-border bg-card">
             <CardContent className="px-3 py-2.5">
@@ -1785,7 +1785,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         }
       }}>
         <DialogContent className="max-w-lg">
-          <DialogTitle className="text-sm font-medium">read this aloud</DialogTitle>
+          <DialogTitle className="text-sm font-medium">Read this aloud</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
             speak naturally at your normal pace — this helps screenpipe learn your voice
           </DialogDescription>

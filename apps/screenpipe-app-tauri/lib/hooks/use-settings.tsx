@@ -278,6 +278,11 @@ export function createDefaultSettingsObject(): Settings {
 			DEFAULT_SETTINGS.enableAccessibility = true;
 			DEFAULT_SETTINGS.enableInputCapture = true;
 			DEFAULT_SETTINGS.disableOcr = true;
+			DEFAULT_SETTINGS.overlayMode = "window";
+		}
+
+		if (p === "linux") {
+			DEFAULT_SETTINGS.overlayMode = "window";
 		}
 
 		return DEFAULT_SETTINGS;

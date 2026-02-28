@@ -48,7 +48,7 @@ pub struct PipeConfig {
     /// Agent CLI to use.  Default: `"pi"`.
     #[serde(default = "default_agent", skip_serializing_if = "is_default_agent")]
     pub agent: String,
-    /// LLM model passed to the agent.  Default: `"claude-haiku-4-5@20251001"`.
+    /// LLM model passed to the agent.  Default: `"claude-haiku-4-5"`.
     #[serde(default = "default_model", skip_serializing_if = "is_default_model")]
     pub model: String,
     /// LLM provider override.  Default: none (uses screenpipe cloud).
@@ -219,7 +219,7 @@ fn resolve_preset(pipes_dir: &Path, preset_id: &str) -> Option<ResolvedPreset> {
             "settings": {
                 "aiPresets": [{
                     "id": "default",
-                    "model": "claude-haiku-4-5@20251001",
+                    "model": "claude-haiku-4-5",
                     "provider": "pi",
                     "defaultPreset": true,
                     "maxContextChars": 200000
@@ -802,7 +802,7 @@ impl PipeManager {
         // Pre-configure pi
         if config.agent == "pi" {
             if let Err(e) = PiExecutor::ensure_pi_config(
-                None,
+                executor.user_token(),
                 SCREENPIPE_API_URL,
                 run_provider.as_deref(),
                 Some(&run_model),
@@ -1713,7 +1713,7 @@ impl PipeManager {
                     // Pre-configure pi with the pipe's provider
                     if config.agent == "pi" {
                         if let Err(e) = PiExecutor::ensure_pi_config(
-                            None,
+                            executor.user_token(),
                             SCREENPIPE_API_URL,
                             provider.as_deref(),
                             Some(&model),
@@ -2415,7 +2415,7 @@ mod tests {
         let content = "---\nschedule: manual\n---\n\nBody";
         let (config, _) = parse_frontmatter(content).unwrap();
         assert_eq!(config.agent, "pi");
-        assert_eq!(config.model, "claude-haiku-4-5@20251001");
+        assert_eq!(config.model, "claude-haiku-4-5");
         assert!(config.enabled);
         assert!(config.provider.is_none());
     }
@@ -2441,7 +2441,7 @@ mod tests {
             schedule: "every 1h".to_string(),
             enabled: true,
             agent: "pi".to_string(),
-            model: "claude-haiku-4-5@20251001".to_string(),
+            model: "claude-haiku-4-5".to_string(),
             provider: None,
             preset: Some("default".to_string()),
             config: HashMap::new(),

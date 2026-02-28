@@ -701,6 +701,16 @@ interface AIPresetsSelectorProps {
   shortcutKey?: string;
   onPresetChange?: (preset: AIPreset) => void;
   showLoginCta?: boolean;
+  /** Controlled mode: override which preset id is shown as selected */
+  controlledPresetId?: string | null;
+  /** Controlled mode: callback when user picks a preset (null = "none") */
+  onControlledSelect?: (presetId: string | null) => void;
+  /** Show a "none" option at the top of the list */
+  allowNone?: boolean;
+  /** Label shown for the none option */
+  noneLabel?: string;
+  /** Compact size variant for inline usage */
+  compact?: boolean;
 }
 
 export const AIPresetDialog = ({
@@ -773,6 +783,11 @@ export const AIPresetsSelector = ({
   shortcutKey = "/",
   onPresetChange,
   showLoginCta = true,
+  controlledPresetId,
+  onControlledSelect,
+  allowNone = false,
+  noneLabel = "none (use pipe defaults)",
+  compact = false,
 }: AIPresetsSelectorProps) => {
   const { settings, updateSettings } = useSettings();
   const [open, setOpen] = useState(false);
@@ -781,16 +796,19 @@ export const AIPresetsSelector = ({
     AIPreset | undefined
   >();
 
+  const isControlled = onControlledSelect !== undefined;
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const aiPresets = (settings?.aiPresets || []) as AIPreset[];
 
   const selectedPreset = useMemo(() => {
+    if (isControlled) return controlledPresetId ?? undefined;
     // Use the first preset or default preset
     const defaultPreset = settings?.aiPresets?.find(
       (preset) => preset.defaultPreset,
     );
     return defaultPreset?.id || settings?.aiPresets?.[0]?.id || undefined;
-  }, [settings?.aiPresets]);
+  }, [settings?.aiPresets, isControlled, controlledPresetId]);
 
   // Check if selected preset requires login
   const selectedPresetRequiresLogin = useMemo(() => {
@@ -1017,7 +1035,7 @@ export const AIPresetsSelector = ({
   return (
     <>
       <div className="flex flex-col w-full gap-2">
-        {selectedPresetRequiresLogin && (
+        {!isControlled && selectedPresetRequiresLogin && (
           <div className="flex items-center gap-2 p-2 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg">
             <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
             <span className="text-amber-600 dark:text-amber-400 flex-1">
@@ -1049,6 +1067,7 @@ export const AIPresetsSelector = ({
                   aria-expanded={open}
                   className={cn(
                     "w-full justify-between",
+                    compact && "h-8 text-xs",
                     selectedPresetRequiresLogin && "border-amber-500/50"
                   )}
                 >
@@ -1091,6 +1110,8 @@ export const AIPresetsSelector = ({
                         </span>
                       </div>
                     </div>
+                  ) : allowNone && isControlled ? (
+                    <span className="text-muted-foreground">{noneLabel}</span>
                   ) : (
                     "select ai preset..."
                   )}
@@ -1119,6 +1140,27 @@ export const AIPresetsSelector = ({
               <CommandInput placeholder="search presets..." />
               <CommandList>
                 <CommandEmpty>no presets found.</CommandEmpty>
+                {allowNone && (
+                  <CommandGroup>
+                    <CommandItem
+                      value="__none__"
+                      onSelect={() => {
+                        if (isControlled) {
+                          onControlledSelect(null);
+                        }
+                        setOpen(false);
+                      }}
+                    >
+                      <Check
+                        className={cn(
+                          "h-4 w-4 shrink-0 mr-2",
+                          !selectedPreset ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <span className="text-muted-foreground">{noneLabel}</span>
+                    </CommandItem>
+                  </CommandGroup>
+                )}
                 {recommendedPresets && recommendedPresets.length > 0 && (
                   <CommandGroup heading="Recommended Presets">
                     {recommendedPresets.map((preset) => (
@@ -1193,13 +1235,15 @@ export const AIPresetsSelector = ({
                     <CommandItem
                       key={preset.id}
                       value={preset.id}
-                      onSelect={(currentValue) => {
-                        // Set the selected preset as default
-                        const selectedPresetObj = aiPresets.find(p => p.id === currentValue);
-                        if (selectedPresetObj && selectedPresetObj.id !== selectedPreset) {
+                      onSelect={() => {
+                        // Use preset from closure — cmdk lowercases the value
+                        // so string comparison against preset.id would fail
+                        if (isControlled) {
+                          onControlledSelect(preset.id);
+                        } else if (preset.id !== selectedPreset) {
                           const updatedPresets = aiPresets.map((p) => ({
                             ...p,
-                            defaultPreset: p.id === currentValue,
+                            defaultPreset: p.id === preset.id,
                           }));
 
                           updateSettings({
@@ -1207,7 +1251,7 @@ export const AIPresetsSelector = ({
                           });
 
                           toast.success("Preset selected", {
-                            description: `${selectedPresetObj.id} is now active`,
+                            description: `${preset.id} is now active`,
                           });
                         }
                         setOpen(false);
