@@ -1,0 +1,73 @@
+# ScreenPipe Windows Build Container
+# Based on Windows Server Core with Visual Studio Build Tools
+
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+LABEL maintainer="ScreenPipe Team"
+LABEL description="Windows container for building ScreenPipe"
+
+# Set PowerShell as default shell
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+# Create directories
+RUN New-Item -ItemType Directory -Force -Path C:\screenpipe, C:\Build, C:\Temp | Out-Null
+
+# Install Chocolatey
+RUN Set-ExecutionPolicy Bypass -Scope Process -Force; \
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; \
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Refresh environment and install basic tools
+RUN $env:PATH = $env:PATH + ';C:\ProgramData\chocolatey\bin'; \
+    [Environment]::SetEnvironmentVariable('PATH', $env:PATH, 'Machine')
+
+# Install Git
+RUN choco install git -y --no-progress
+
+# Install Visual Studio Build Tools 2022 with required workloads
+RUN choco install visualstudio2022buildtools -y --no-progress; \
+    choco install visualstudio2022-workload-vctools -y --no-progress; \
+    choco install visualstudio2022-workload-nativedesktop -y --no-progress
+
+# Install LLVM for bindgen
+RUN choco install llvm -y --no-progress
+
+# Install Rust
+RUN $rustupInit = 'C:\Temp\rustup-init.exe'; \
+    Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $rustupInit; \
+    & $rustupInit -y --default-toolchain stable --target x86_64-pc-windows-msvc; \
+    Remove-Item $rustupInit -Force
+
+# Install Node.js LTS
+RUN choco install nodejs-lts -y --no-progress
+
+# Install Bun
+RUN $bunInstall = 'C:\Temp\bun-install.ps1'; \
+    Invoke-WebRequest -Uri 'https://bun.sh/install.ps1' -OutFile $bunInstall; \
+    & $bunInstall; \
+    Remove-Item $bunInstall -Force
+
+# Install WebView2 Runtime
+RUN $webview2Installer = 'C:\Temp\MicrosoftEdgeWebview2Setup.exe'; \
+    Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $webview2Installer; \
+    & $webview2Installer /silent /install; \
+    Remove-Item $webview2Installer -Force
+
+# Set environment variables
+ENV RUST_BACKTRACE=1
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+ENV RUSTFLAGS="-C target-feature=+crt-static"
+
+# Update PATH
+RUN $env:PATH = 'C:\Program Files\Git\cmd;C:\Program Files\nodejs;C:\Users\ContainerAdministrator\.cargo\bin;C:\Users\ContainerAdministrator\.bun\bin;C:\Program Files\LLVM\bin;' + $env:PATH; \
+    [Environment]::SetEnvironmentVariable('PATH', $env:PATH, 'Machine')
+
+# Copy build script
+COPY build-windows-container.ps1 C:\scripts\build.ps1
+
+# Set working directory
+WORKDIR C:\screenpipe
+
+# Default command - run the build script
+ENTRYPOINT ["powershell", "-Command"]
+CMD ["C:\\scripts\\build.ps1"]

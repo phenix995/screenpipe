@@ -1,0 +1,49 @@
+# Docker Compose for Windows Container Build
+# Usage:
+#   docker-compose -f docker-compose.windows-build.yml up --build
+#
+# Or with custom parameters:
+#   docker-compose -f docker-compose.windows-build.yml run --rm screenpipe-builder powershell -Command "C:\scripts\build.ps1 -GitBranch dev -BuildMode debug"
+
+version: '3.8'
+
+services:
+  screenpipe-builder:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.windows
+    image: screenpipe-builder:windows
+    container_name: screenpipe-windows-builder
+    
+    # Windows container configuration
+    isolation: ${WINDOWS_ISOLATION:-process}  # Use 'hyperv' if process isolation fails
+    
+    # Environment variables
+    environment:
+      - RUST_BACKTRACE=1
+      - CARGO_NET_GIT_FETCH_WITH_CLI=true
+      - RUSTFLAGS=-C target-feature=+crt-static
+      - GIT_REPO_URL=${GIT_REPO_URL:-https://github.com/mediar-ai/screenpipe.git}
+      - GIT_BRANCH=${GIT_BRANCH:-main}
+      - BUILD_MODE=${BUILD_MODE:-release}
+    
+    # Mount output directory for build artifacts
+    volumes:
+      - type: bind
+        source: ${OUTPUT_PATH:-C:\Build}
+        target: C:\Build
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          cpus: '4'
+          memory: 8G
+    
+    # Keep container running for debugging if needed
+    # Remove this to have container exit after build
+    # stdin_open: true
+    # tty: true
